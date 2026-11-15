@@ -186,7 +186,7 @@ function commitChanges(message) {
   if (actionKey) {
     activity = [{
       id: globalThis.crypto?.randomUUID?.() ?? String(Date.now()),
-      action: t(actionKey),
+      action: actionKey,
       createdAt: new Date().toISOString(),
     }, ...activity].slice(0, 50);
   }
@@ -249,7 +249,10 @@ function renderProductivityHub() {
     marker.className = "workflow-row__color";
     marker.style.setProperty("--column-color", `var(--color-${column.color})`);
     const name = document.createElement("span");
-    name.textContent = column.name;
+    const defaultColumnNames = { todo: "Нужно сделать", progress: "В работе", done: "Готово" };
+    name.textContent = defaultColumnNames[column.id] === column.name
+      ? t(`column.${column.id}`)
+      : column.name;
     const actions = document.createElement("div");
     const rename = document.createElement("button");
     rename.className = "mini-button";
@@ -274,7 +277,7 @@ function renderProductivityHub() {
   memberList.replaceChildren();
   if (members.length === 0) {
     const empty = document.createElement("p");
-    empty.textContent = "Добавьте участников, чтобы назначать задачи.";
+    empty.textContent = t("hub.emptyMembers");
     memberList.append(empty);
   }
   members.forEach((member) => {
@@ -291,7 +294,7 @@ function renderProductivityHub() {
     memberList.append(row);
   });
 
-  focusTaskSelect.replaceChildren(new Option("Выберите задачу", ""));
+  focusTaskSelect.replaceChildren(new Option(t("hub.chooseTask"), ""));
   getBoardTasks().filter((task) => task.status !== "done").forEach((task) => {
     focusTaskSelect.add(new Option(task.title, task.id));
   });
@@ -303,7 +306,7 @@ function renderProductivityHub() {
     Math.max(0, (new Date(task.completedAt) - new Date(task.createdAt)) / 86400000),
   );
   const average = durations.length
-    ? `${(durations.reduce((sum, value) => sum + value, 0) / durations.length).toFixed(1)} дн.`
+    ? t("hub.days", { count: (durations.reduce((sum, value) => sum + value, 0) / durations.length).toFixed(1) })
     : "—";
   const weekAgo = Date.now() - 7 * 86400000;
   const velocity = completed.filter((task) => new Date(task.completedAt).getTime() >= weekAgo).length;
@@ -321,7 +324,10 @@ function renderProductivityHub() {
     const row = document.createElement("div");
     row.className = "flow-bar";
     row.innerHTML = `<span></span><i></i><strong>${count}</strong>`;
-    row.querySelector("span").textContent = column.name;
+    const defaultColumnNames = { todo: "Нужно сделать", progress: "В работе", done: "Готово" };
+    row.querySelector("span").textContent = defaultColumnNames[column.id] === column.name
+      ? t(`column.${column.id}`)
+      : column.name;
     row.querySelector("i").style.setProperty("--flow-width", `${Math.max(4, (count / max) * 100)}%`);
     flowBars.append(row);
   });
@@ -329,7 +335,8 @@ function renderProductivityHub() {
   activityList.replaceChildren();
   activity.slice(0, 12).forEach((entry) => {
     const item = document.createElement("li");
-    item.textContent = `${entry.action} · ${new Intl.DateTimeFormat(undefined, { dateStyle: "short", timeStyle: "short" }).format(new Date(entry.createdAt))}`;
+    const action = String(entry.action).startsWith("action.") ? t(entry.action) : entry.action;
+    item.textContent = `${action} · ${new Intl.DateTimeFormat(undefined, { dateStyle: "short", timeStyle: "short" }).format(new Date(entry.createdAt))}`;
     activityList.append(item);
   });
   applyAccessibility();
@@ -354,10 +361,10 @@ function toggleFocusTimer(button) {
     return;
   }
   if (!focusTaskSelect.value) {
-    showNotification("Выберите задачу для фокуса", "error");
+    showNotification(t("hub.focusChoose"), "error");
     return;
   }
-  button.textContent = "Пауза";
+  button.textContent = t("hub.pause");
   focusTimer = window.setInterval(() => {
     focusSeconds = Math.max(0, focusSeconds - 1);
     formatFocusTime();
@@ -365,9 +372,9 @@ function toggleFocusTimer(button) {
       clearInterval(focusTimer);
       focusTimer = null;
       button.textContent = t("hub.start");
-      showNotification("Фокус-сессия завершена");
+      showNotification(t("hub.focusComplete"));
       if (Notification.permission === "granted") {
-        new Notification("Flowboard", { body: "Фокус-сессия завершена" });
+        new Notification("Flowboard", { body: t("hub.focusComplete") });
       }
     }
   }, 1000);
@@ -403,7 +410,7 @@ function checkDeadlineReminders() {
   const today = new Date().toISOString().slice(0, 10);
   const due = getTasks().filter((task) => task.deadline === today && task.status !== "done" && !task.archived);
   if (due.length > 0) {
-    new Notification("Flowboard", { body: `Сегодня срок у задач: ${due.map((task) => task.title).join(", ")}` });
+    new Notification("Flowboard", { body: t("hub.dueToday", { tasks: due.map((task) => task.title).join(", ") }) });
   }
 }
 
@@ -829,7 +836,7 @@ document.addEventListener("click", (event) => {
       break;
     }
     case "add-column": {
-      const name = window.prompt("Название новой колонки:", "Проверка");
+      const name = window.prompt(t("hub.columnPrompt"), t("hub.columnDefault"));
       if (!name?.trim()) break;
       columns = addColumn(columns, name);
       persistWorkspace();
@@ -838,7 +845,7 @@ document.addEventListener("click", (event) => {
     }
     case "rename-column": {
       const column = columns.find((item) => item.id === button.dataset.columnId);
-      const name = window.prompt("Новое название колонки:", column?.name ?? "");
+      const name = window.prompt(t("hub.renameColumnPrompt"), column?.name ?? "");
       if (!name?.trim()) break;
       columns = renameColumn(columns, button.dataset.columnId, name);
       persistWorkspace();
@@ -854,7 +861,7 @@ document.addEventListener("click", (event) => {
       break;
     }
     case "add-member": {
-      const member = window.prompt("Имя участника:", "");
+      const member = window.prompt(t("hub.memberPrompt"), "");
       if (!member?.trim()) break;
       members = [...new Set([...members, member.trim().slice(0, 50)])];
       persistWorkspace();
@@ -876,10 +883,10 @@ document.addEventListener("click", (event) => {
       break;
     case "enable-reminders":
       if (!("Notification" in window)) {
-        showNotification("Уведомления не поддерживаются браузером", "error");
+        showNotification(t("hub.notificationsUnsupported"), "error");
       } else {
         Notification.requestPermission().then((permission) => {
-          showNotification(permission === "granted" ? "Напоминания включены" : "Доступ к уведомлениям не предоставлен", permission === "granted" ? "success" : "error");
+          showNotification(t(permission === "granted" ? "hub.notificationsEnabled" : "hub.notificationsDenied"), permission === "granted" ? "success" : "error");
           checkDeadlineReminders();
         });
       }
@@ -893,7 +900,7 @@ document.addEventListener("click", (event) => {
       syncPackage.value = encodeSyncPayload(createSyncPayload());
       syncPackage.select();
       navigator.clipboard?.writeText(syncPackage.value).catch(() => {});
-      showNotification("Код синхронизации создан");
+      showNotification(t("hub.syncCreated"));
       break;
     case "apply-sync-package":
       try {
@@ -907,9 +914,9 @@ document.addEventListener("click", (event) => {
         members = Array.isArray(payload.members) ? payload.members : [];
         activity = Array.isArray(payload.activity) ? payload.activity : [];
         activeBoardId = getBoards()[0].id;
-        commitChanges("Пакет синхронизации применён");
+        commitChanges(t("hub.syncApplied"));
       } catch {
-        showNotification("Некорректный код синхронизации", "error");
+        showNotification(t("hub.syncInvalid"), "error");
       }
       break;
   }

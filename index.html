@@ -478,7 +478,7 @@
             <p class="eyebrow">FLOWBOARD / LAB</p>
             <h2 id="productivity-title" data-i18n="hub.title">Центр продуктивности</h2>
           </div>
-          <button class="icon-button" type="button" aria-label="Закрыть" data-action="close-productivity-hub">×</button>
+          <button class="icon-button" type="button" aria-label="Закрыть" data-i18n-aria="hub.close" data-action="close-productivity-hub">×</button>
         </div>
 
         <div class="productivity-grid">
@@ -486,7 +486,7 @@
             <p class="eyebrow" data-i18n="hub.focus">Фокус</p>
             <h3>Pomodoro</h3>
             <strong class="focus-clock" data-focus-clock>25:00</strong>
-            <select id="focus-task" aria-label="Задача для фокуса"></select>
+            <select id="focus-task" aria-label="Задача для фокуса" data-i18n-aria="hub.chooseTask"></select>
             <div class="hub-actions">
               <button class="primary-button" type="button" data-action="toggle-focus" data-i18n="hub.start">Старт</button>
               <button class="secondary-button" type="button" data-action="reset-focus" data-i18n="hub.reset">Сброс</button>
@@ -494,29 +494,29 @@
           </section>
 
           <section class="hub-card">
-            <p class="eyebrow">Процесс</p>
+            <p class="eyebrow" data-i18n="hub.processLabel">Процесс</p>
             <h3 data-i18n="hub.workflow">Колонки доски</h3>
             <div class="workflow-editor" data-workflow-editor></div>
             <button class="secondary-button" type="button" data-action="add-column" data-i18n="hub.addColumn">+ Колонка</button>
           </section>
 
           <section class="hub-card">
-            <p class="eyebrow">Команда</p>
+            <p class="eyebrow" data-i18n="hub.teamLabel">Команда</p>
             <h3 data-i18n="hub.team">Участники</h3>
             <div class="member-list" data-member-list></div>
             <button class="secondary-button" type="button" data-action="add-member" data-i18n="hub.addMember">+ Участник</button>
           </section>
 
           <section class="hub-card">
-            <p class="eyebrow">Напоминания</p>
+            <p class="eyebrow" data-i18n="hub.reminderLabel">Напоминания</p>
             <h3 data-i18n="hub.reminders">Напоминания</h3>
-            <p>Уведомлять о задачах, срок которых наступает сегодня.</p>
-            <button class="secondary-button" type="button" data-action="enable-reminders">Включить уведомления</button>
-            <button class="secondary-button" type="button" data-action="install-app" hidden>Установить приложение</button>
+            <p data-i18n="hub.reminderDescription">Уведомлять о задачах, срок которых наступает сегодня.</p>
+            <button class="secondary-button" type="button" data-action="enable-reminders" data-i18n="hub.enableNotifications">Включить уведомления</button>
+            <button class="secondary-button" type="button" data-action="install-app" data-i18n="hub.installApp" hidden>Установить приложение</button>
           </section>
 
           <section class="hub-card hub-card--wide">
-            <p class="eyebrow">Отчёты</p>
+            <p class="eyebrow" data-i18n="hub.reportsLabel">Отчёты</p>
             <h3 data-i18n="hub.reports">Поток работы</h3>
             <div class="insight-strip">
               <div><span data-i18n="hub.average">Среднее выполнение</span><strong data-insight="average">—</strong></div>
@@ -528,26 +528,26 @@
           </section>
 
           <section class="hub-card">
-            <p class="eyebrow">Доступность</p>
+            <p class="eyebrow" data-i18n="hub.accessibilityLabel">Доступность</p>
             <h3 data-i18n="hub.accessibility">Отображение</h3>
-            <label class="toggle-row"><input type="checkbox" data-setting="highContrast" /> Высокий контраст</label>
-            <label class="toggle-row"><input type="checkbox" data-setting="reduceMotion" /> Меньше анимаций</label>
-            <label class="form-field"><span>Размер текста</span><input type="range" min="90" max="120" step="5" value="100" data-setting="fontScale" /></label>
+            <label class="toggle-row"><input type="checkbox" data-setting="highContrast" /> <span data-i18n="hub.highContrast">Высокий контраст</span></label>
+            <label class="toggle-row"><input type="checkbox" data-setting="reduceMotion" /> <span data-i18n="hub.reduceMotion">Меньше анимаций</span></label>
+            <label class="form-field"><span data-i18n="hub.fontSize">Размер текста</span><input type="range" min="90" max="120" step="5" value="100" data-setting="fontScale" /></label>
           </section>
 
           <section class="hub-card">
-            <p class="eyebrow">Синхронизация</p>
+            <p class="eyebrow" data-i18n="hub.syncLabel">Синхронизация</p>
             <h3 data-i18n="hub.sync">Пакет рабочего пространства</h3>
-            <p>Перенесите данные на другое устройство безопасным кодом.</p>
-            <textarea id="sync-package" rows="4" placeholder="Код синхронизации"></textarea>
+            <p data-i18n="hub.syncDescription">Перенесите данные на другое устройство безопасным кодом.</p>
+            <textarea id="sync-package" rows="4" placeholder="Код синхронизации" data-i18n-placeholder="hub.syncPlaceholder"></textarea>
             <div class="hub-actions">
-              <button class="secondary-button" type="button" data-action="create-sync-package">Создать</button>
-              <button class="primary-button" type="button" data-action="apply-sync-package">Применить</button>
+              <button class="secondary-button" type="button" data-action="create-sync-package" data-i18n="hub.create">Создать</button>
+              <button class="primary-button" type="button" data-action="apply-sync-package" data-i18n="hub.apply">Применить</button>
             </div>
           </section>
 
           <section class="hub-card hub-card--wide">
-            <p class="eyebrow">История</p>
+            <p class="eyebrow" data-i18n="hub.historyLabel">История</p>
             <h3 data-i18n="hub.history">Журнал изменений</h3>
             <ol class="activity-list" data-activity-list></ol>
           </section>

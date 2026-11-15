@@ -94,21 +94,25 @@ test("темы, сортировка и клавиатурные команды"
 
 test("переключает все языки, сохраняет выбор и включает RTL", async ({ page }) => {
   const languages = [
-    ["en", "Main board", "ltr"],
-    ["ig", "Bọdụ bụ isi", "ltr"],
-    ["uz", "Asosiy doska", "ltr"],
-    ["uk", "Основна дошка", "ltr"],
-    ["he", "לוח ראשי", "rtl"],
-    ["yi", "הויפּט־ברעט", "rtl"],
+    ["en", "Main board", "ltr", "Productivity hub", "Process"],
+    ["ig", "Bọdụ bụ isi", "ltr", "Ebe nrụpụta", "Usoro"],
+    ["uz", "Asosiy doska", "ltr", "Samaradorlik markazi", "Jarayon"],
+    ["uk", "Основна дошка", "ltr", "Центр продуктивності", "Процес"],
+    ["he", "לוח ראשי", "rtl", "מרכז פרודוקטיביות", "תהליך"],
+    ["yi", "הויפּט־ברעט", "rtl", "פּראָדוקטיוויטעט־צענטער", "פּראָצעס"],
   ];
 
-  for (const [language, boardName, direction] of languages) {
+  for (const [language, boardName, direction, hubTitle, processLabel] of languages) {
     await page.locator("#language-select").selectOption(language);
     await expect(page.locator("html")).toHaveAttribute("lang", language);
     await expect(page.locator("html")).toHaveAttribute("dir", direction);
     await expect(page.locator("#active-board-name")).toHaveText(boardName);
     expect(await page.evaluate(() => localStorage.getItem("flowboard-language")))
       .toBe(JSON.stringify(language));
+    await page.locator('[data-action="open-productivity-hub"]').click();
+    await expect(page.locator("#productivity-title")).toHaveText(hubTitle);
+    await expect(page.locator('[data-i18n="hub.processLabel"]')).toHaveText(processLabel);
+    await page.locator('[data-action="close-productivity-hub"]').click();
   }
 
   await page.reload();

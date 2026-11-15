@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { getLanguage, getLocale, setLanguage, t } from "../js/i18n.js";
+import { getLanguage, getLocale, getTranslationKeys, hasTranslation, setLanguage, t } from "../js/i18n.js";
 
 test("переключает язык и подставляет переменные", () => {
   setLanguage("en");
@@ -32,4 +32,13 @@ test("использует русский для неизвестного язы
 
   assert.equal(getLanguage(), "ru");
   assert.equal(t("board.default"), "Основная доска");
+});
+
+test("центр продуктивности полностью переведён на все языки", () => {
+  const hubKeys = getTranslationKeys("ru").filter((key) => key.startsWith("hub."));
+
+  for (const language of ["ru", "ig", "en", "uz", "uk", "he", "yi"]) {
+    const missing = hubKeys.filter((key) => !hasTranslation(language, key));
+    assert.deepEqual(missing, [], `${language}: ${missing.join(", ")}`);
+  }
 });
