@@ -75,6 +75,18 @@ function normalizeTaskData(taskData) {
           createdAt: String(comment?.createdAt || new Date().toISOString()),
         })).filter((comment) => comment.text).slice(-30)
       : [],
+    attachments: Array.isArray(taskData.attachments)
+      ? taskData.attachments.map((attachment) => ({
+          id: String(attachment?.id || createId()),
+          name: String(attachment?.name || "file").slice(0, 100),
+          type: String(attachment?.type || "application/octet-stream").slice(0, 100),
+          size: Math.max(0, Number(attachment?.size) || 0),
+          dataUrl: String(attachment?.dataUrl || ""),
+        })).filter((attachment) => attachment.dataUrl).slice(0, 5)
+      : [],
+    estimatedMinutes: Math.max(0, Math.min(100000, Number(taskData.estimatedMinutes) || 0)),
+    timeSpentSeconds: Math.max(0, Number(taskData.timeSpentSeconds) || 0),
+    timerStartedAt: String(taskData.timerStartedAt || ""),
   };
 }
 

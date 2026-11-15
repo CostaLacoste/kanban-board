@@ -17,6 +17,12 @@ function cloneTask(task) {
     comments: Array.isArray(task.comments)
       ? task.comments.map((comment) => ({ ...comment }))
       : [],
+    attachments: Array.isArray(task.attachments)
+      ? task.attachments.map((attachment) => ({ ...attachment }))
+      : [],
+    estimatedMinutes: Math.max(0, Number(task.estimatedMinutes) || 0),
+    timeSpentSeconds: Math.max(0, Number(task.timeSpentSeconds) || 0),
+    timerStartedAt: String(task.timerStartedAt || ""),
   };
 }
 

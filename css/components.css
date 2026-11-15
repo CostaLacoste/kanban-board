@@ -80,6 +80,31 @@
   align-items: stretch;
 }
 
+.batch-bar {
+  position: sticky;
+  z-index: 12;
+  top: 0.5rem;
+  display: flex;
+  gap: 0.55rem;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 0.7rem;
+  margin: 1rem 0;
+  background: var(--color-yellow);
+  border: 3px solid var(--color-border);
+  box-shadow: 5px 5px 0 var(--color-border);
+}
+
+.batch-bar[hidden] { display: none; }
+
+.batch-bar select {
+  min-height: 38px;
+  padding: 0.4rem;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 2px solid var(--color-border);
+}
+
 .view-switcher .is-active {
   color: #fff;
   background: var(--color-purple);
@@ -987,6 +1012,95 @@ body[data-theme="candy"] .board-heading__intro {
     transform var(--transition),
     box-shadow var(--transition);
 }
+
+.task-card__select {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+  width: max-content;
+  margin-bottom: 0.5rem;
+  font-size: 0.62rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.task-card__select input { accent-color: var(--color-purple); }
+
+.task-card.is-selected {
+  outline: 5px solid var(--color-yellow);
+  outline-offset: 2px;
+}
+
+.task-time,
+.task-attachments {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0.55rem 0;
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.task-time button,
+.task-attachments a {
+  padding: 0.25rem 0.4rem;
+  color: var(--color-text);
+  background: var(--color-yellow);
+  border: 2px solid var(--color-border);
+  text-decoration: none;
+}
+
+.attachment-editor {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.attachment-editor__item {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.45rem;
+  font-size: 0.7rem;
+  background: var(--color-surface-muted);
+  border: 2px solid var(--color-border);
+}
+
+.command-palette input[type="search"] {
+  width: 100%;
+  padding: 0.9rem;
+  margin-bottom: 0.8rem;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 3px solid var(--color-border);
+}
+
+.command-list {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: 0.45rem;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.command-item {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  justify-content: space-between;
+  padding: 0.75rem;
+  color: var(--color-text);
+  font-weight: 900;
+  text-align: start;
+  background: var(--color-surface-muted);
+  border: 2px solid var(--color-border);
+  cursor: pointer;
+}
+
+.command-item:hover,
+.command-item:focus-visible { background: var(--color-lime); }
 
 .task-card:hover {
   box-shadow: 7px 7px 0 var(--color-border);

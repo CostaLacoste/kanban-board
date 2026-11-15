@@ -29,6 +29,20 @@ function formatDeadline(deadline) {
   }).format(date);
 }
 
+function formatDuration(seconds) {
+  const minutes = Math.floor(Math.max(0, seconds) / 60);
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return hours > 0 ? `${hours}h ${remainder}m` : `${minutes}m`;
+}
+
+function elapsedSeconds(task) {
+  const running = task.timerStartedAt
+    ? Math.max(0, Math.floor((Date.now() - new Date(task.timerStartedAt).getTime()) / 1000))
+    : 0;
+  return (Number(task.timeSpentSeconds) || 0) + running;
+}
+
 function renderTags(card, task) {
   const container = card.querySelector(".task-card__tags");
   const tags = Array.isArray(task.tags) ? task.tags : [];
@@ -127,6 +141,33 @@ export function createTaskCard(task) {
   card.querySelector("[data-i18n=\"task.checklist\"]").textContent = t("task.checklist");
   renderTags(card, task);
   renderChecklist(card, task);
+
+  if (task.estimatedMinutes || task.timeSpentSeconds || task.timerStartedAt) {
+    const time = document.createElement("div");
+    time.className = "task-time";
+    const summary = document.createElement("span");
+    summary.textContent = `${t("time.spent")}: ${formatDuration(elapsedSeconds(task))}${task.estimatedMinutes ? ` / ${task.estimatedMinutes}m` : ""}`;
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.dataset.action = "track-time";
+    toggle.textContent = t(task.timerStartedAt ? "time.stop" : "time.start");
+    time.append(summary, toggle);
+    card.querySelector(".task-card__title").after(time);
+  }
+
+  if (task.attachments?.length) {
+    const attachments = document.createElement("div");
+    attachments.className = "task-attachments";
+    task.attachments.forEach((attachment) => {
+      const link = document.createElement("a");
+      link.href = attachment.dataUrl;
+      link.download = attachment.name;
+      link.textContent = `📎 ${attachment.name}`;
+      link.addEventListener("click", (event) => event.stopPropagation());
+      attachments.append(link);
+    });
+    card.querySelector(".task-card__footer").before(attachments);
+  }
 
   if (task.cover) {
     const cover = document.createElement("div");

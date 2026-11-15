@@ -9,7 +9,7 @@
       content="Flowboard — учебная канбан-доска для управления задачами."
     />
     <title>Flowboard — канбан-доска</title>
-    <link rel="stylesheet" href="./css/style.css?v=5" />
+    <link rel="stylesheet" href="./css/style.css?v=7" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <script type="module" src="./js/main.js"></script>
   </head>
@@ -22,6 +22,7 @@
       </a>
 
       <div class="header-tools">
+        <button class="header-action" type="button" data-action="open-command-palette" data-i18n="command.open">⌘K Команды</button>
         <button class="header-action" type="button" data-action="open-productivity-hub" data-i18n="app.hub">
           ◫ Центр
         </button>
@@ -73,6 +74,22 @@
           <button type="button" data-action="import-workspace" data-i18n="workspace.import">Импорт</button>
           <input id="workspace-import" type="file" accept="application/json,.json" hidden />
         </div>
+      </section>
+
+      <section class="batch-bar" data-batch-bar hidden aria-live="polite">
+        <strong data-batch-count>0</strong>
+        <span data-i18n="batch.selected">выбрано</span>
+        <select id="batch-status" aria-label="Статус"></select>
+        <select id="batch-priority" aria-label="Приоритет">
+          <option value="" data-i18n="batch.priority">Приоритет</option>
+          <option value="low" data-i18n="priority.low">Низкий</option>
+          <option value="medium" data-i18n="priority.medium">Средний</option>
+          <option value="high" data-i18n="priority.high">Высокий</option>
+        </select>
+        <button class="secondary-button" type="button" data-action="apply-batch" data-i18n="batch.apply">Применить</button>
+        <button class="secondary-button" type="button" data-action="archive-batch" data-i18n="batch.archive">В архив</button>
+        <button class="danger-button" type="button" data-action="delete-batch" data-i18n="batch.delete">Удалить</button>
+        <button class="mini-button" type="button" data-action="clear-batch" data-i18n="batch.clear">Снять выбор</button>
       </section>
 
       <section class="board-heading" aria-labelledby="board-title">
@@ -340,6 +357,19 @@
 
         <div class="form-row">
           <label class="form-field">
+            <span data-i18n="time.estimate">Оценка времени, мин.</span>
+            <input id="task-estimate" name="estimatedMinutes" type="number" min="0" max="100000" step="5" placeholder="60" />
+          </label>
+          <label class="form-field">
+            <span data-i18n="attachment.files">Вложения</span>
+            <input id="task-attachments" type="file" multiple accept="image/*,.pdf,.txt,.md,.doc,.docx" />
+            <small data-i18n="attachment.help">До 5 файлов, каждый не больше 750 КБ</small>
+          </label>
+        </div>
+        <div class="attachment-editor" data-attachment-editor></div>
+
+        <div class="form-row">
+          <label class="form-field">
             <span data-i18n="extra.assignee">Исполнитель</span>
             <select id="task-assignee" name="assignee">
               <option value="" data-i18n="extra.unassigned">Не назначен</option>
@@ -501,6 +531,14 @@
           </section>
 
           <section class="hub-card">
+            <p class="eyebrow" data-i18n="automation.label">Автоматизации</p>
+            <h3 data-i18n="automation.title">Правила задач</h3>
+            <label class="toggle-row"><input type="checkbox" data-automation="overdueHigh" /> <span data-i18n="automation.overdueHigh">Просроченным — высокий приоритет</span></label>
+            <label class="toggle-row"><input type="checkbox" data-automation="checklistDone" /> <span data-i18n="automation.checklistDone">Готовый чек-лист завершает задачу</span></label>
+            <label class="toggle-row"><input type="checkbox" data-automation="dueTodayTag" /> <span data-i18n="automation.dueTodayTag">Добавлять тег today в день срока</span></label>
+          </section>
+
+          <section class="hub-card">
             <p class="eyebrow" data-i18n="hub.teamLabel">Команда</p>
             <h3 data-i18n="hub.team">Участники</h3>
             <div class="member-list" data-member-list></div>
@@ -555,8 +593,20 @@
       </div>
     </dialog>
 
+    <dialog id="command-dialog" class="dialog dialog--small" aria-labelledby="command-title">
+      <div class="dialog__content command-palette">
+        <div class="dialog__header">
+          <div><p class="eyebrow">⌘/CTRL + K</p><h2 id="command-title" data-i18n="command.title">Командная палитра</h2></div>
+          <button class="icon-button" type="button" data-action="close-command-palette" data-i18n-aria="hub.close" aria-label="Закрыть">×</button>
+        </div>
+        <input id="command-search" type="search" data-i18n-placeholder="command.search" placeholder="Найти команду..." autocomplete="off" />
+        <div class="command-list" data-command-list></div>
+      </div>
+    </dialog>
+
     <template id="task-card-template">
       <article class="task-card" draggable="true">
+        <label class="task-card__select"><input type="checkbox" data-action="select-task" /><span data-i18n="batch.select">Выбрать</span></label>
         <div class="task-card__header">
           <span class="priority-badge"></span>
           <span class="recurrence-badge" hidden></span>

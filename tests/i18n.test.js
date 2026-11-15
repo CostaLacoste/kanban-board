@@ -42,3 +42,15 @@ test("центр продуктивности полностью перевед�
     assert.deepEqual(missing, [], `${language}: ${missing.join(", ")}`);
   }
 });
+
+test("новые инструменты полностью переведены на все языки", () => {
+  const prefixes = ["command.", "batch.", "time.", "attachment.", "automation."];
+  const featureKeys = getTranslationKeys("ru").filter((key) =>
+    prefixes.some((prefix) => key.startsWith(prefix)),
+  );
+
+  for (const language of ["ru", "ig", "en", "uz", "uk", "he", "yi"]) {
+    const missing = featureKeys.filter((key) => !hasTranslation(language, key));
+    assert.deepEqual(missing, [], `${language}: ${missing.join(", ")}`);
+  }
+});

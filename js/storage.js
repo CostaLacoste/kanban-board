@@ -10,6 +10,7 @@ const MEMBERS_KEY = "flowboard-members";
 const ACTIVITY_KEY = "flowboard-activity";
 const ACCESSIBILITY_KEY = "flowboard-accessibility";
 const PROFILE_KEY = "flowboard-profile";
+const AUTOMATIONS_KEY = "flowboard-automations";
 
 function saveValue(key, value) {
   try {
@@ -66,6 +67,7 @@ export function saveSetting(key, value) {
     activity: ACTIVITY_KEY,
     accessibility: ACCESSIBILITY_KEY,
     profile: PROFILE_KEY,
+    automations: AUTOMATIONS_KEY,
   }[key];
   return storageKey ? saveValue(storageKey, value) : false;
 }
@@ -82,6 +84,7 @@ export function loadSetting(key, fallback) {
     activity: ACTIVITY_KEY,
     accessibility: ACCESSIBILITY_KEY,
     profile: PROFILE_KEY,
+    automations: AUTOMATIONS_KEY,
   }[key];
   return storageKey ? loadValue(storageKey, fallback) : fallback;
 }

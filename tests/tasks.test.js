@@ -44,6 +44,28 @@ describe("задачи", () => {
     assert.equal(getTasks().length, 1);
   });
 
+  test("сохраняет вложения и данные учёта времени", () => {
+    const task = createTask({
+      title: "Задача с файлами",
+      estimatedMinutes: 90,
+      timeSpentSeconds: 125,
+      timerStartedAt: "2026-11-15T10:00:00.000Z",
+      attachments: [{
+        id: "file-1",
+        name: "brief.txt",
+        type: "text/plain",
+        size: 12,
+        dataUrl: "data:text/plain;base64,SGVsbG8=",
+      }],
+    });
+
+    assert.equal(task.estimatedMinutes, 90);
+    assert.equal(task.timeSpentSeconds, 125);
+    assert.equal(task.timerStartedAt, "2026-11-15T10:00:00.000Z");
+    assert.equal(task.attachments[0].name, "brief.txt");
+    assert.equal(task.attachments[0].dataUrl, "data:text/plain;base64,SGVsbG8=");
+  });
+
   test("поддерживает пользовательский статус и нормализует приоритет", () => {
     const task = createTask({
       title: "Задача",

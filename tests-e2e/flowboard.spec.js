@@ -155,3 +155,68 @@ test("экспортирует и импортирует рабочее прос
   await expect(page.locator("#active-board-name")).toHaveText("Импортированная");
   await expect(page.getByRole("heading", { name: "Задача из файла" })).toBeVisible();
 });
+
+test("командная палитра, пакетные операции, время, автоматизации и вложения", async ({ page }) => {
+  await page.getByRole("button", { name: "Новая задача" }).click();
+  await page.locator("#task-title").fill("Задача с вложением");
+  await page.locator("#task-estimate").fill("60");
+  await page.locator("#task-deadline").fill("2000-01-01");
+  await page.locator("#task-attachments").setInputFiles({
+    name: "brief.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("Flowboard brief"),
+  });
+  await expect(page.locator("[data-attachment-editor]")).toContainText("brief.txt");
+  await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+
+  const firstCard = page.locator(".task-card").filter({ hasText: "Задача с вложением" });
+  await expect(firstCard.getByRole("link", { name: /brief\.txt/ })).toBeVisible();
+  await expect(firstCard.locator(".task-time")).toContainText("60m");
+  await firstCard.getByRole("button", { name: "Старт" }).click();
+  await expect(firstCard.getByRole("button", { name: "Стоп" })).toBeVisible();
+  await firstCard.getByRole("button", { name: "Стоп" }).click();
+
+  await page.getByRole("button", { name: "Новая задача" }).click();
+  await page.locator("#task-title").fill("Вторая задача");
+  await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+
+  await page.locator('[data-action="select-task"]').nth(0).check();
+  await page.locator('[data-action="select-task"]').nth(1).check();
+  await expect(page.locator("[data-batch-count]")).toHaveText("2");
+  await page.locator("#batch-priority").selectOption("high");
+  await page.locator('[data-action="apply-batch"]').click();
+  await expect(page.locator(".priority-badge--high")).toHaveCount(2);
+
+  await page.keyboard.press("ControlOrMeta+K");
+  await expect(page.locator("#command-dialog")).toBeVisible();
+  await page.locator("#command-search").fill("календар");
+  await page.locator('[data-command="show-calendar"]').click();
+  await expect(page.locator("[data-calendar-view]")).toBeVisible();
+
+  await page.locator('[data-action="open-productivity-hub"]').click();
+  await page.locator('[data-automation="overdueHigh"]').check();
+  await page.locator('[data-action="close-productivity-hub"]').click();
+  await page.getByRole("button", { name: "Доска", exact: true }).click();
+  await expect(firstCard.locator(".priority-badge--high")).toBeVisible();
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("flowboard-automations"))))
+    .toMatchObject({ overdueHigh: true });
+});
+
+test("новые инструменты помещаются на мобильном экране", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('[data-action="open-command-palette"]')).toBeVisible();
+
+  await page.keyboard.press("ControlOrMeta+K");
+  await expect(page.locator("#command-dialog")).toBeVisible();
+  const commandBox = await page.locator("#command-dialog").boundingBox();
+  expect(commandBox.x).toBeGreaterThanOrEqual(0);
+  expect(commandBox.x + commandBox.width).toBeLessThanOrEqual(390);
+  await page.keyboard.press("Escape");
+
+  await page.locator('[data-action="open-productivity-hub"]').click();
+  await expect(page.locator('[data-automation="overdueHigh"]')).toBeAttached();
+  const hasHorizontalOverflow = await page.evaluate(() =>
+    document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  );
+  expect(hasHorizontalOverflow).toBe(false);
+});

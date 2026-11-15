@@ -29,6 +29,7 @@ import {
 } from "./tasks.js";
 import { renderArchive, renderBoard, renderCalendar, showNotification } from "./ui.js";
 import { setLanguage, t, translateDocument } from "./i18n.js";
+import { applyAutomations, defaultAutomations } from "./automations.js";
 import {
   addColumn,
   getDefaultColumns,
@@ -70,6 +71,14 @@ const assigneeSelect = document.querySelector("#task-assignee");
 const dependencySelect = document.querySelector("#task-dependencies");
 const syncPackage = document.querySelector("#sync-package");
 const installButton = document.querySelector('[data-action="install-app"]');
+const commandDialog = document.querySelector("#command-dialog");
+const commandSearch = document.querySelector("#command-search");
+const commandList = document.querySelector("[data-command-list]");
+const batchBar = document.querySelector("[data-batch-bar]");
+const batchStatus = document.querySelector("#batch-status");
+const batchPriority = document.querySelector("#batch-priority");
+const attachmentInput = document.querySelector("#task-attachments");
+const attachmentEditor = document.querySelector("[data-attachment-editor]");
 
 let activeBoardId = "default";
 let sortMode = "manual";
@@ -83,6 +92,9 @@ let currentView = "board";
 let focusSeconds = 25 * 60;
 let focusTimer = null;
 let deferredInstallPrompt = null;
+let selectedTaskIds = new Set();
+let pendingAttachments = [];
+let automations = { ...defaultAutomations };
 
 function getBoardTasks({ archived = false } = {}) {
   return getTasks().filter(
@@ -142,6 +154,7 @@ function refreshBoard() {
   renderArchive(getBoardTasks({ archived: true }));
   renderCalendar(tasks, calendarMonth.value, openEditDialog);
   renderProductivityHub();
+  syncBatchBar();
 }
 
 function persistWorkspace() {
@@ -155,6 +168,7 @@ function persistWorkspace() {
     saveSetting("members", members),
     saveSetting("activity", activity),
     saveSetting("accessibility", accessibility),
+    saveSetting("automations", automations),
   ].every(Boolean);
 }
 
@@ -190,12 +204,111 @@ function commitChanges(message) {
       createdAt: new Date().toISOString(),
     }, ...activity].slice(0, 50);
   }
+  const automated = applyAutomations(getTasks(), automations);
+  if (automated.changed) setTasks(automated.tasks);
   const saved = persistWorkspace();
   refreshBoard();
   showNotification(
     saved ? message : t("notice.saveError"),
     saved ? "success" : "error",
   );
+}
+
+function getColumnName(column) {
+  const defaultColumnNames = { todo: "Нужно сделать", progress: "В работе", done: "Готово" };
+  return defaultColumnNames[column.id] === column.name
+    ? t(`column.${column.id}`)
+    : column.name;
+}
+
+function syncBatchBar() {
+  selectedTaskIds = new Set([...selectedTaskIds].filter((id) => getTaskById(id) && !getTaskById(id).archived));
+  batchBar.hidden = selectedTaskIds.size === 0;
+  batchBar.querySelector("[data-batch-count]").textContent = String(selectedTaskIds.size);
+  batchStatus.replaceChildren(new Option(t("batch.status"), ""));
+  columns.forEach((column) => batchStatus.add(new Option(getColumnName(column), column.id)));
+  document.querySelectorAll(".task-card").forEach((card) => {
+    const selected = selectedTaskIds.has(card.dataset.taskId);
+    card.classList.toggle("is-selected", selected);
+    const checkbox = card.querySelector('[data-action="select-task"]');
+    if (checkbox) checkbox.checked = selected;
+  });
+}
+
+function renderAttachmentEditor() {
+  attachmentEditor.replaceChildren();
+  pendingAttachments.forEach((attachment) => {
+    const row = document.createElement("div");
+    row.className = "attachment-editor__item";
+    const name = document.createElement("span");
+    name.textContent = `📎 ${attachment.name} · ${Math.ceil(attachment.size / 1024)} KB`;
+    const remove = document.createElement("button");
+    remove.className = "mini-button";
+    remove.type = "button";
+    remove.dataset.action = "remove-attachment";
+    remove.dataset.attachmentId = attachment.id;
+    remove.textContent = "×";
+    row.append(name, remove);
+    attachmentEditor.append(row);
+  });
+}
+
+function readAttachment(file) {
+  return new Promise((resolve, reject) => {
+    if (file.size > 750 * 1024) {
+      reject(new Error(t("attachment.tooLarge", { name: file.name })));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => resolve({
+      id: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${file.name}`,
+      name: file.name,
+      type: file.type,
+      size: file.size,
+      dataUrl: reader.result,
+    });
+    reader.onerror = () => reject(new Error(t("attachment.readError")));
+    reader.readAsDataURL(file);
+  });
+}
+
+function commandDefinitions() {
+  return [
+    ["new-task", "command.newTask", "N"],
+    ["show-board", "command.board", "B"],
+    ["show-calendar", "command.calendar", "C"],
+    ["open-hub", "command.hub", "H"],
+    ["export", "command.export", "E"],
+    ["clear-filters", "command.clearFilters", "R"],
+  ];
+}
+
+function renderCommandPalette() {
+  const query = commandSearch.value.trim().toLowerCase();
+  commandList.replaceChildren();
+  commandDefinitions()
+    .filter(([, key]) => t(key).toLowerCase().includes(query))
+    .forEach(([id, key, shortcut]) => {
+      const button = document.createElement("button");
+      button.className = "command-item";
+      button.type = "button";
+      button.dataset.command = id;
+      button.innerHTML = `<span></span><kbd>${shortcut}</kbd>`;
+      button.querySelector("span").textContent = t(key);
+      commandList.append(button);
+    });
+}
+
+function runCommand(command) {
+  commandDialog.close();
+  if (command === "new-task") openCreateDialog();
+  else if (command === "show-board") setView("board");
+  else if (command === "show-calendar") setView("calendar");
+  else if (command === "open-hub") { renderProductivityHub(); productivityDialog.showModal(); }
+  else if (command === "export") exportWorkspace();
+  else if (command === "clear-filters") {
+    searchInput.value = ""; prioritySelect.value = "all"; tagSelect.value = "all"; refreshBoard();
+  }
 }
 
 function todayMonth() {
@@ -249,10 +362,7 @@ function renderProductivityHub() {
     marker.className = "workflow-row__color";
     marker.style.setProperty("--column-color", `var(--color-${column.color})`);
     const name = document.createElement("span");
-    const defaultColumnNames = { todo: "Нужно сделать", progress: "В работе", done: "Готово" };
-    name.textContent = defaultColumnNames[column.id] === column.name
-      ? t(`column.${column.id}`)
-      : column.name;
+    name.textContent = getColumnName(column);
     const actions = document.createElement("div");
     const rename = document.createElement("button");
     rename.className = "mini-button";
@@ -324,10 +434,7 @@ function renderProductivityHub() {
     const row = document.createElement("div");
     row.className = "flow-bar";
     row.innerHTML = `<span></span><i></i><strong>${count}</strong>`;
-    const defaultColumnNames = { todo: "Нужно сделать", progress: "В работе", done: "Готово" };
-    row.querySelector("span").textContent = defaultColumnNames[column.id] === column.name
-      ? t(`column.${column.id}`)
-      : column.name;
+    row.querySelector("span").textContent = getColumnName(column);
     row.querySelector("i").style.setProperty("--flow-width", `${Math.max(4, (count / max) * 100)}%`);
     flowBars.append(row);
   });
@@ -338,6 +445,9 @@ function renderProductivityHub() {
     const action = String(entry.action).startsWith("action.") ? t(entry.action) : entry.action;
     item.textContent = `${action} · ${new Intl.DateTimeFormat(undefined, { dateStyle: "short", timeStyle: "short" }).format(new Date(entry.createdAt))}`;
     activityList.append(item);
+  });
+  document.querySelectorAll("[data-automation]").forEach((input) => {
+    input.checked = Boolean(automations[input.dataset.automation]);
   });
   applyAccessibility();
 }
@@ -395,13 +505,14 @@ function decodeSyncPayload(value) {
 
 function createSyncPayload() {
   return {
-    version: 3,
+    version: 4,
     boards: getBoards(),
     tasks: getTasks(),
     columns,
     templates,
     members,
     activity,
+    automations,
   };
 }
 
@@ -495,6 +606,8 @@ function openCreateDialog() {
   form.elements.taskId.value = "";
   syncTaskFormOptions();
   renderChecklistEditor([]);
+  pendingAttachments = [];
+  renderAttachmentEditor();
   document.querySelector("[data-comment-field]").hidden = true;
   taskDialogTitle.textContent = t("task.new");
   taskDialog.showModal();
@@ -521,10 +634,13 @@ function openEditDialog(taskId) {
   form.elements.assignee.value = task.assignee ?? "";
   form.elements.color.value = task.color ?? "default";
   form.elements.cover.value = task.cover ?? "";
+  form.elements.estimatedMinutes.value = task.estimatedMinutes || "";
   [...form.elements.dependsOn.options].forEach((option) => {
     option.selected = task.dependsOn?.includes(option.value);
   });
   renderChecklistEditor(task.checklist ?? []);
+  pendingAttachments = [...(task.attachments ?? [])];
+  renderAttachmentEditor();
   document.querySelector("[data-comment-field]").hidden = false;
   form.elements.comment.value = "";
   taskDialogTitle.textContent = t("task.edit");
@@ -588,7 +704,7 @@ function removeActiveBoard() {
 
 function exportWorkspace() {
   const payload = {
-    version: 3,
+    version: 4,
     exportedAt: new Date().toISOString(),
     activeBoardId,
     boards: getBoards(),
@@ -597,6 +713,7 @@ function exportWorkspace() {
     templates,
     members,
     activity,
+    automations,
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -622,6 +739,7 @@ async function importWorkspace(file) {
     templates = Array.isArray(payload.templates) ? payload.templates : templates;
     members = Array.isArray(payload.members) ? payload.members : members;
     activity = Array.isArray(payload.activity) ? payload.activity : activity;
+    automations = { ...defaultAutomations, ...(payload.automations || {}) };
     activeBoardId = getBoardById(payload.activeBoardId)
       ? payload.activeBoardId
       : getBoards()[0].id;
@@ -714,6 +832,9 @@ form.addEventListener("submit", (event) => {
   const currentTask = isEditing ? getTaskById(taskData.taskId) : null;
   const comment = String(taskData.comment ?? "").trim();
   taskData.comments = [...(currentTask?.comments ?? [])];
+  taskData.attachments = pendingAttachments;
+  taskData.timeSpentSeconds = currentTask?.timeSpentSeconds ?? 0;
+  taskData.timerStartedAt = currentTask?.timerStartedAt ?? "";
   if (comment) {
     taskData.comments.push({
       id: globalThis.crypto?.randomUUID?.() ?? String(Date.now()),
@@ -766,6 +887,13 @@ document.addEventListener("click", (event) => {
 
   switch (button.dataset.action) {
     case "open-task-dialog": openCreateDialog(); break;
+    case "open-command-palette":
+      commandSearch.value = "";
+      renderCommandPalette();
+      commandDialog.showModal();
+      commandSearch.focus();
+      break;
+    case "close-command-palette": commandDialog.close(); break;
     case "open-productivity-hub":
       renderProductivityHub();
       productivityDialog.showModal();
@@ -814,6 +942,58 @@ document.addEventListener("click", (event) => {
     case "open-archive": archiveDialog.showModal(); break;
     case "close-archive": archiveDialog.close(); break;
     case "restore-task": restoreArchivedTask(taskId); break;
+    case "remove-attachment":
+      pendingAttachments = pendingAttachments.filter((attachment) => attachment.id !== button.dataset.attachmentId);
+      renderAttachmentEditor();
+      break;
+    case "track-time": {
+      const task = getTaskById(taskId);
+      if (!task) break;
+      rememberState("action.edit");
+      if (task.timerStartedAt) {
+        const elapsed = Math.max(0, Math.floor((Date.now() - new Date(task.timerStartedAt).getTime()) / 1000));
+        updateTask(taskId, { timeSpentSeconds: (task.timeSpentSeconds || 0) + elapsed, timerStartedAt: "" });
+        commitChanges(t("time.stopped"));
+      } else {
+        updateTask(taskId, { timerStartedAt: new Date().toISOString() });
+        commitChanges(t("time.started"));
+      }
+      break;
+    }
+    case "apply-batch": {
+      rememberState("action.edit");
+      const completedAt = new Date().toISOString();
+      setTasks(getTasks().map((task) => {
+        if (!selectedTaskIds.has(task.id)) return task;
+        const status = batchStatus.value || task.status;
+        return {
+          ...task,
+          status,
+          completedAt: status === "done" ? task.completedAt || completedAt : "",
+          ...(batchPriority.value ? { priority: batchPriority.value } : {}),
+        };
+      }));
+      selectedTaskIds.clear();
+      commitChanges(t("batch.updated"));
+      break;
+    }
+    case "archive-batch":
+      rememberState("action.archive");
+      setTasks(getTasks().map((task) => selectedTaskIds.has(task.id) ? { ...task, archived: true } : task));
+      selectedTaskIds.clear();
+      commitChanges(t("batch.archived"));
+      break;
+    case "delete-batch":
+      if (!window.confirm(t("batch.deleteConfirm", { count: selectedTaskIds.size }))) break;
+      rememberState("action.delete");
+      setTasks(getTasks().filter((task) => !selectedTaskIds.has(task.id)));
+      selectedTaskIds.clear();
+      commitChanges(t("batch.deleted"));
+      break;
+    case "clear-batch":
+      selectedTaskIds.clear();
+      syncBatchBar();
+      break;
     case "save-template": {
       const name = window.prompt("Название шаблона:", form.elements.title.value || "Новый шаблон");
       if (!name?.trim()) break;
@@ -913,6 +1093,7 @@ document.addEventListener("click", (event) => {
         templates = Array.isArray(payload.templates) ? payload.templates : [];
         members = Array.isArray(payload.members) ? payload.members : [];
         activity = Array.isArray(payload.activity) ? payload.activity : [];
+        automations = { ...defaultAutomations, ...(payload.automations || {}) };
         activeBoardId = getBoards()[0].id;
         commitChanges(t("hub.syncApplied"));
       } catch {
@@ -956,6 +1137,35 @@ importInput.addEventListener("change", () => {
   if (file) importWorkspace(file);
 });
 
+attachmentInput.addEventListener("change", async () => {
+  try {
+    const available = Math.max(0, 5 - pendingAttachments.length);
+    const additions = await Promise.all([...attachmentInput.files].slice(0, available).map(readAttachment));
+    pendingAttachments = [...pendingAttachments, ...additions];
+    renderAttachmentEditor();
+  } catch (error) {
+    showNotification(error.message, "error");
+  } finally {
+    attachmentInput.value = "";
+  }
+});
+
+commandSearch.addEventListener("input", renderCommandPalette);
+commandList.addEventListener("click", (event) => {
+  const command = event.target.closest("[data-command]")?.dataset.command;
+  if (command) runCommand(command);
+});
+
+document.querySelectorAll("[data-automation]").forEach((input) => {
+  input.addEventListener("change", () => {
+    automations = { ...automations, [input.dataset.automation]: input.checked };
+    const result = applyAutomations(getTasks(), automations);
+    if (result.changed) setTasks(result.tasks);
+    persistWorkspace();
+    refreshBoard();
+  });
+});
+
 calendarMonth.addEventListener("change", () => {
   renderCalendar(getBoardTasks(), calendarMonth.value, openEditDialog);
 });
@@ -973,6 +1183,13 @@ document.querySelectorAll("[data-setting]").forEach((input) => {
 });
 
 board.addEventListener("change", (event) => {
+  const selector = event.target.closest('[data-action="select-task"]');
+  if (selector) {
+    const id = selector.closest(".task-card")?.dataset.taskId;
+    if (id) selector.checked ? selectedTaskIds.add(id) : selectedTaskIds.delete(id);
+    syncBatchBar();
+    return;
+  }
   const checkbox = event.target.closest('[data-action="toggle-checklist"]');
   if (!checkbox) return;
 
@@ -998,6 +1215,15 @@ document.addEventListener("keydown", (event) => {
     return;
   }
 
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+    event.preventDefault();
+    commandSearch.value = "";
+    renderCommandPalette();
+    commandDialog.showModal();
+    commandSearch.focus();
+    return;
+  }
+
   const card = event.target.closest(".task-card");
   if (card && event.altKey && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
     event.preventDefault();
@@ -1015,7 +1241,7 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
-[taskDialog, deleteDialog, archiveDialog, productivityDialog].forEach((dialog) => {
+[taskDialog, deleteDialog, archiveDialog, productivityDialog, commandDialog].forEach((dialog) => {
   dialog.addEventListener("click", (event) => {
     if (event.target === dialog) dialog.close();
   });
@@ -1051,6 +1277,7 @@ window.addEventListener("storage", (event) => {
   templates = loadSetting("templates", []);
   members = loadSetting("members", []);
   activity = loadSetting("activity", []);
+  automations = { ...defaultAutomations, ...(loadSetting("automations", {}) || {}) };
   refreshBoard();
 });
 
@@ -1074,6 +1301,10 @@ activity = Array.isArray(loadSetting("activity", [])) ? loadSetting("activity", 
 accessibility = {
   ...accessibility,
   ...(loadSetting("accessibility", {}) || {}),
+};
+automations = {
+  ...defaultAutomations,
+  ...(loadSetting("automations", {}) || {}),
 };
 calendarMonth.value = todayMonth();
 const language = loadSetting("language", "ru");
