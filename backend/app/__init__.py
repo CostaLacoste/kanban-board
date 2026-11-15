@@ -1,0 +1,2 @@
+"""Flowboard FastAPI application package."""
+
