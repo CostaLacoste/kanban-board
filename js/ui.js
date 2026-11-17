@@ -1,5 +1,6 @@
 import { calculateStatistics, isTaskOverdue } from "./statistics.js";
 import { getLocale, t } from "./i18n.js";
+import { getAttachmentUrl } from "./api.js";
 
 const template = document.querySelector("#task-card-template");
 const totalTaskCount = document.querySelector("#total-task-count");
@@ -160,7 +161,7 @@ export function createTaskCard(task) {
     attachments.className = "task-attachments";
     task.attachments.forEach((attachment) => {
       const link = document.createElement("a");
-      link.href = attachment.dataUrl;
+      link.href = getAttachmentUrl(attachment);
       link.download = attachment.name;
       link.textContent = `📎 ${attachment.name}`;
       link.addEventListener("click", (event) => event.stopPropagation());

@@ -82,7 +82,9 @@ function normalizeTaskData(taskData) {
           type: String(attachment?.type || "application/octet-stream").slice(0, 100),
           size: Math.max(0, Number(attachment?.size) || 0),
           dataUrl: String(attachment?.dataUrl || ""),
-        })).filter((attachment) => attachment.dataUrl).slice(0, 5)
+          url: String(attachment?.url || ""),
+          createdAt: String(attachment?.createdAt || ""),
+        })).filter((attachment) => attachment.dataUrl || attachment.url).slice(0, 5)
       : [],
     estimatedMinutes: Math.max(0, Math.min(100000, Number(taskData.estimatedMinutes) || 0)),
     timeSpentSeconds: Math.max(0, Number(taskData.timeSpentSeconds) || 0),

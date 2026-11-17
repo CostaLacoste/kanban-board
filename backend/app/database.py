@@ -75,11 +75,89 @@ class Database:
                     FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
                 );
                 CREATE INDEX IF NOT EXISTS attachments_task_idx ON attachments(task_id);
+                CREATE TABLE IF NOT EXISTS users (
+                    id TEXT PRIMARY KEY,
+                    email TEXT NOT NULL UNIQUE,
+                    name TEXT NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS workspace_members (
+                    user_id TEXT PRIMARY KEY,
+                    role TEXT NOT NULL CHECK(role IN ('owner', 'editor', 'viewer')),
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS api_tokens (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    token_hash TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL,
+                    last_used_at TEXT,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS saved_filters (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    query TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS notifications (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT,
+                    kind TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    read_at TEXT,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS webhooks (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    events TEXT NOT NULL,
+                    secret TEXT NOT NULL,
+                    active INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS outbox (
+                    id TEXT PRIMARY KEY,
+                    webhook_id TEXT NOT NULL,
+                    event TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    delivered_at TEXT,
+                    last_error TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (webhook_id) REFERENCES webhooks(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS revisions (
+                    id TEXT PRIMARY KEY,
+                    revision INTEGER NOT NULL UNIQUE,
+                    actor_id TEXT,
+                    snapshot TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS notifications_user_idx ON notifications(user_id, read_at, created_at);
+                CREATE INDEX IF NOT EXISTS outbox_pending_idx ON outbox(delivered_at, created_at);
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    version INTEGER PRIMARY KEY,
+                    applied_at TEXT NOT NULL
+                );
                 """
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES (1,?)", (utc_now(),)
             )
             connection.execute(
                 "INSERT OR IGNORE INTO boards(id, name, created_at) VALUES (?, ?, ?)",
                 (DEFAULT_BOARD["id"], DEFAULT_BOARD["name"], DEFAULT_BOARD["createdAt"]),
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO settings(key, value, updated_at) VALUES ('workspaceRevision', '0', ?)",
+                (utc_now(),),
             )
 
     def get_setting(self, key: str, default: Any) -> Any:

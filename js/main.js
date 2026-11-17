@@ -1,7 +1,3 @@
-import { inject } from "@vercel/analytics"
-
-inject()
-
 import {
   createBoard,
   deleteBoard,
@@ -34,6 +30,12 @@ import {
 import { renderArchive, renderBoard, renderCalendar, showNotification } from "./ui.js";
 import { setLanguage, t, translateDocument } from "./i18n.js";
 import { applyAutomations, defaultAutomations } from "./automations.js";
+import {
+  connectRealtime,
+  flushWorkspaceQueue,
+  loadRemoteWorkspace,
+  scheduleWorkspaceSync,
+} from "./api.js";
 import {
   addColumn,
   getDefaultColumns,
@@ -99,6 +101,8 @@ let deferredInstallPrompt = null;
 let selectedTaskIds = new Set();
 let pendingAttachments = [];
 let automations = { ...defaultAutomations };
+let applyingRemoteWorkspace = false;
+let localWorkspaceGeneration = 0;
 
 function getBoardTasks({ archived = false } = {}) {
   return getTasks().filter(
@@ -162,7 +166,7 @@ function refreshBoard() {
 }
 
 function persistWorkspace() {
-  return [
+  const saved = [
     saveTasks(getTasks()),
     saveBoards(getBoards()),
     saveSetting("activeBoard", activeBoardId),
@@ -174,6 +178,11 @@ function persistWorkspace() {
     saveSetting("accessibility", accessibility),
     saveSetting("automations", automations),
   ].every(Boolean);
+  if (saved && !applyingRemoteWorkspace) {
+    localWorkspaceGeneration += 1;
+    scheduleWorkspaceSync(createSyncPayload());
+  }
+  return saved;
 }
 
 function updateUndoButton() {
@@ -516,8 +525,58 @@ function createSyncPayload() {
     templates,
     members,
     activity,
+    accessibility,
+    activeBoardId,
+    theme: themeSelect.value || "classic",
+    language: languageSelect.value || "ru",
+    sort: sortMode,
     automations,
   };
+}
+
+function applyRemoteWorkspace(payload) {
+  if (!Array.isArray(payload?.boards) || !Array.isArray(payload?.tasks)) return;
+  applyingRemoteWorkspace = true;
+  setBoards(payload.boards);
+  setTasks(payload.tasks);
+  columns = normalizeColumns(payload.columns ?? columns);
+  templates = Array.isArray(payload.templates) ? payload.templates : templates;
+  members = Array.isArray(payload.members) ? payload.members : members;
+  activity = Array.isArray(payload.activity) ? payload.activity : activity;
+  accessibility = { ...accessibility, ...(payload.accessibility || {}) };
+  automations = { ...defaultAutomations, ...(payload.automations || {}) };
+  activeBoardId = getBoardById(payload.activeBoardId) ? payload.activeBoardId : getBoards()[0].id;
+  sortMode = payload.sort || sortMode;
+  sortSelect.value = sortMode;
+  if (payload.theme) {
+    themeSelect.value = payload.theme;
+    document.body.dataset.theme = payload.theme;
+  }
+  if (payload.language) {
+    setLanguage(payload.language);
+    languageSelect.value = payload.language;
+    translateDocument();
+  }
+  persistWorkspace();
+  applyingRemoteWorkspace = false;
+  applyAccessibility();
+  refreshBoard();
+}
+
+async function initializeRemoteWorkspace() {
+  const initialGeneration = localWorkspaceGeneration;
+  const remote = await loadRemoteWorkspace();
+  if (remote && localWorkspaceGeneration === initialGeneration) {
+    applyRemoteWorkspace(remote);
+  }
+  await flushWorkspaceQueue();
+  connectRealtime(async () => {
+    const generationBeforeLoad = localWorkspaceGeneration;
+    const latest = await loadRemoteWorkspace();
+    if (latest && localWorkspaceGeneration === generationBeforeLoad) {
+      applyRemoteWorkspace(latest);
+    }
+  });
 }
 
 function checkDeadlineReminders() {
@@ -1325,3 +1384,4 @@ applyAccessibility();
 updateUndoButton();
 refreshBoard();
 window.setInterval(checkDeadlineReminders, 60 * 60 * 1000);
+void initializeRemoteWorkspace();

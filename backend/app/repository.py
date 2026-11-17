@@ -332,12 +332,18 @@ class Repository:
         values = {key: self.database.get_setting(key, default) for key, default in defaults.items()}
         return {
             "version": 4,
+            "revision": int(self.database.get_setting("workspaceRevision", 0)),
             **values,
             "boards": self.list_boards(),
             "tasks": self.list_tasks(),
         }
 
-    def replace_workspace(self, payload: WorkspacePayload) -> dict[str, Any]:
+    def replace_workspace(
+        self,
+        payload: WorkspacePayload,
+        expected_revision: int | None = None,
+        actor_id: str | None = None,
+    ) -> dict[str, Any]:
         boards = [board.model_dump(by_alias=True, mode="json") for board in payload.boards]
         tasks = [task.model_dump(by_alias=True, mode="json") for task in payload.tasks]
         board_ids = {board["id"] for board in boards}
@@ -350,6 +356,11 @@ class Repository:
         ):
             raise ValueError("Workspace structure is invalid")
         with self.database._lock, self.database.connect() as connection:
+            row = connection.execute("SELECT value FROM settings WHERE key='workspaceRevision'").fetchone()
+            current_revision = int(json.loads(row["value"])) if row else 0
+            if expected_revision is not None and expected_revision != current_revision:
+                raise RuntimeError(f"revision:{current_revision}")
+            attachments = connection.execute("SELECT * FROM attachments").fetchall()
             connection.execute("DELETE FROM attachments")
             connection.execute("DELETE FROM tasks")
             connection.execute("DELETE FROM boards")
@@ -363,8 +374,186 @@ class Repository:
                 task["createdAt"] = task.get("createdAt") or utc_now()
                 task["completedAt"] = task.get("completedAt") or (utc_now() if task["status"] == "done" else "")
                 self._save_task(connection, task)
-            settings = payload.model_dump(by_alias=True, mode="json", exclude={"boards", "tasks", "version"})
+            retained_task_ids = {task["id"] for task in tasks}
+            for attachment in attachments:
+                if attachment["task_id"] not in retained_task_ids:
+                    continue
+                connection.execute(
+                    "INSERT INTO attachments(id,task_id,name,media_type,size,content,created_at) VALUES (?,?,?,?,?,?,?)",
+                    (
+                        attachment["id"], attachment["task_id"], attachment["name"],
+                        attachment["media_type"], attachment["size"], attachment["content"],
+                        attachment["created_at"],
+                    ),
+                )
+            settings = payload.model_dump(
+                by_alias=True, mode="json", exclude={"boards", "tasks", "version", "revision"}
+            )
             for key, value in settings.items():
                 self.database.set_setting(key, value, connection)
-        return self.get_workspace()
+            self.database.set_setting("workspaceRevision", current_revision + 1, connection)
+        workspace = self.get_workspace()
+        self.record_revision(workspace, actor_id)
+        self.enqueue_event("workspace.updated", {"revision": workspace["revision"], "actorId": actor_id})
+        self.create_notification(actor_id, "sync", "Workspace synchronized", f"Revision {workspace['revision']} saved")
+        return workspace
+
+    def record_revision(self, snapshot: dict[str, Any], actor_id: str | None) -> None:
+        with self.database._lock, self.database.connect() as connection:
+            connection.execute(
+                "INSERT OR REPLACE INTO revisions(id,revision,actor_id,snapshot,created_at) VALUES (?,?,?,?,?)",
+                (str(uuid4()), snapshot["revision"], actor_id, json.dumps(snapshot, ensure_ascii=False), utc_now()),
+            )
+            old = connection.execute(
+                "SELECT id FROM revisions ORDER BY revision DESC LIMIT -1 OFFSET 50"
+            ).fetchall()
+            if old:
+                connection.executemany("DELETE FROM revisions WHERE id=?", [(row["id"],) for row in old])
+
+    def list_revisions(self) -> list[dict[str, Any]]:
+        with self.database._lock, self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT id,revision,actor_id,created_at FROM revisions ORDER BY revision DESC"
+            ).fetchall()
+        return [{"id": r["id"], "revision": r["revision"], "actorId": r["actor_id"], "createdAt": r["created_at"]} for r in rows]
+
+    def restore_revision(self, revision_id: str, actor_id: str | None) -> dict[str, Any] | None:
+        with self.database._lock, self.database.connect() as connection:
+            row = connection.execute("SELECT snapshot FROM revisions WHERE id=?", (revision_id,)).fetchone()
+        if row is None:
+            return None
+        snapshot = json.loads(row["snapshot"])
+        current = int(self.database.get_setting("workspaceRevision", 0))
+        return self.replace_workspace(WorkspacePayload.model_validate(snapshot), current, actor_id)
+
+    def search_tasks(
+        self,
+        query: str = "",
+        status: str | None = None,
+        priority: str | None = None,
+        assignee: str | None = None,
+        tag: str | None = None,
+    ) -> list[dict[str, Any]]:
+        needle = query.strip().lower()
+        results = []
+        for task in self.list_tasks():
+            haystack = " ".join([
+                task.get("title", ""), task.get("description", ""),
+                " ".join(task.get("tags") or []),
+                " ".join(item.get("text", "") for item in task.get("checklist") or []),
+            ]).lower()
+            if needle and needle not in haystack:
+                continue
+            if status and task.get("status") != status:
+                continue
+            if priority and task.get("priority") != priority:
+                continue
+            if assignee and task.get("assignee") != assignee:
+                continue
+            if tag and tag.lower() not in (task.get("tags") or []):
+                continue
+            results.append(task)
+        return results
+
+    def create_saved_filter(self, user_id: str, name: str, query: dict[str, Any]) -> dict[str, Any]:
+        item = {"id": str(uuid4()), "name": name, "query": query, "createdAt": utc_now()}
+        with self.database._lock, self.database.connect() as connection:
+            connection.execute(
+                "INSERT INTO saved_filters(id,user_id,name,query,created_at) VALUES (?,?,?,?,?)",
+                (item["id"], user_id, name, json.dumps(query, ensure_ascii=False), item["createdAt"]),
+            )
+        return item
+
+    def list_saved_filters(self, user_id: str) -> list[dict[str, Any]]:
+        with self.database._lock, self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM saved_filters WHERE user_id=? ORDER BY created_at DESC", (user_id,)
+            ).fetchall()
+        return [{"id": r["id"], "name": r["name"], "query": json.loads(r["query"]), "createdAt": r["created_at"]} for r in rows]
+
+    def delete_saved_filter(self, user_id: str, filter_id: str) -> bool:
+        with self.database._lock, self.database.connect() as connection:
+            return connection.execute("DELETE FROM saved_filters WHERE id=? AND user_id=?", (filter_id, user_id)).rowcount > 0
+
+    def create_notification(self, user_id: str | None, kind: str, title: str, body: str) -> dict[str, Any]:
+        item = {"id": str(uuid4()), "kind": kind, "title": title, "body": body, "readAt": None, "createdAt": utc_now()}
+        with self.database._lock, self.database.connect() as connection:
+            connection.execute(
+                "INSERT INTO notifications(id,user_id,kind,title,body,created_at) VALUES (?,?,?,?,?,?)",
+                (item["id"], user_id, kind, title, body, item["createdAt"]),
+            )
+        return item
+
+    def list_notifications(self, user_id: str | None) -> list[dict[str, Any]]:
+        with self.database._lock, self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM notifications WHERE user_id IS NULL OR user_id=? ORDER BY created_at DESC LIMIT 100",
+                (user_id,),
+            ).fetchall()
+        return [{"id": r["id"], "kind": r["kind"], "title": r["title"], "body": r["body"], "readAt": r["read_at"], "createdAt": r["created_at"]} for r in rows]
+
+    def read_notification(self, notification_id: str, user_id: str | None) -> bool:
+        with self.database._lock, self.database.connect() as connection:
+            return connection.execute(
+                "UPDATE notifications SET read_at=? WHERE id=? AND (user_id IS NULL OR user_id=?)",
+                (utc_now(), notification_id, user_id),
+            ).rowcount > 0
+
+    def get_notification_preferences(self, user_id: str) -> dict[str, Any]:
+        return self.database.get_setting(
+            f"notificationPreferences:{user_id}",
+            {"inAppEnabled": True, "pushEnabled": True, "emailEnabled": False},
+        )
+
+    def set_notification_preferences(self, user_id: str, value: dict[str, Any]) -> dict[str, Any]:
+        self.database.set_setting(f"notificationPreferences:{user_id}", value)
+        return value
+
+    def create_webhook(self, user_id: str, url: str, events: list[str]) -> dict[str, Any]:
+        item = {"id": str(uuid4()), "url": url, "events": list(dict.fromkeys(events)), "active": True, "createdAt": utc_now()}
+        with self.database._lock, self.database.connect() as connection:
+            connection.execute(
+                "INSERT INTO webhooks(id,user_id,url,events,secret,active,created_at) VALUES (?,?,?,?,?,?,?)",
+                (item["id"], user_id, url, json.dumps(item["events"]), str(uuid4()), 1, item["createdAt"]),
+            )
+        return item
+
+    def list_webhooks(self, user_id: str) -> list[dict[str, Any]]:
+        with self.database._lock, self.database.connect() as connection:
+            rows = connection.execute("SELECT * FROM webhooks WHERE user_id=? ORDER BY created_at DESC", (user_id,)).fetchall()
+        return [{"id": r["id"], "url": r["url"], "events": json.loads(r["events"]), "active": bool(r["active"]), "createdAt": r["created_at"]} for r in rows]
+
+    def delete_webhook(self, user_id: str, webhook_id: str) -> bool:
+        with self.database._lock, self.database.connect() as connection:
+            return connection.execute("DELETE FROM webhooks WHERE id=? AND user_id=?", (webhook_id, user_id)).rowcount > 0
+
+    def enqueue_event(self, event: str, payload: dict[str, Any]) -> int:
+        queued = 0
+        with self.database._lock, self.database.connect() as connection:
+            rows = connection.execute("SELECT id,events FROM webhooks WHERE active=1").fetchall()
+            for row in rows:
+                events = json.loads(row["events"])
+                if event not in events and "*" not in events:
+                    continue
+                connection.execute(
+                    "INSERT INTO outbox(id,webhook_id,event,payload,created_at) VALUES (?,?,?,?,?)",
+                    (str(uuid4()), row["id"], event, json.dumps(payload, ensure_ascii=False), utc_now()),
+                )
+                queued += 1
+        return queued
+
+    def pending_outbox(self, limit: int = 20) -> list[dict[str, Any]]:
+        with self.database._lock, self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT o.*,w.url,w.secret FROM outbox o JOIN webhooks w ON w.id=o.webhook_id "
+                "WHERE o.delivered_at IS NULL AND o.attempts<8 ORDER BY o.created_at LIMIT ?", (limit,)
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def finish_outbox(self, item_id: str, error: str | None = None) -> None:
+        with self.database._lock, self.database.connect() as connection:
+            if error:
+                connection.execute("UPDATE outbox SET attempts=attempts+1,last_error=? WHERE id=?", (error[:500], item_id))
+            else:
+                connection.execute("UPDATE outbox SET attempts=attempts+1,delivered_at=? WHERE id=?", (utc_now(), item_id))
 

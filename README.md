@@ -30,9 +30,11 @@
 
 Данные сохраняются локально в браузере, поэтому задачи остаются на доске после перезагрузки страницы.
 
-В каталоге `backend/` также находится локальный REST API на FastAPI с SQLite,
-эндпоинтами для досок, задач, пакетных операций, автоматизаций, рабочего
-пространства и файловых вложений. Инструкции запуска — в `backend/README.md`.
+В каталоге `backend/` находится REST API на FastAPI с SQLite, авторизацией,
+ролями, realtime-синхронизацией, историей версий, поиском, уведомлениями,
+API-токенами, webhooks и файловыми вложениями. Frontend подключается к нему
+после явной настройки адреса и автоматически откатывается на `localStorage`. Инструкции запуска —
+в `backend/README.md`.
 
 ## Технологии
 
@@ -41,7 +43,7 @@
 - JavaScript и ES-модули;
 - нативный DOM API;
 - Drag and Drop API;
-- Web Storage API.
+- Web Storage API;
 - Python 3.11+;
 - FastAPI и Pydantic;
 - SQLite.
@@ -51,10 +53,11 @@
 Запустите проект через локальный сервер, например:
 
 ```bash
-python3 -m http.server 8000
+python3 -m http.server 4173
 ```
 
-Затем откройте `http://localhost:8000`.
+Затем откройте `http://localhost:4173`. Порт `8000` остаётся свободным для
+FastAPI.
 
 ## Автотесты
 
@@ -94,6 +97,7 @@ Unit-тесты проверяют CRUD-операции, доски, сорти
 ├── js/
 │   ├── drag-drop.js
 │   ├── automations.js
+│   ├── api.js
 │   ├── boards.js
 │   ├── filters.js
 │   ├── i18n.js
@@ -106,6 +110,7 @@ Unit-тесты проверяют CRUD-операции, доски, сорти
 │   ├── ui.js
 │   └── workflow.js
 ├── tests/
+│   ├── api.test.js
 │   ├── boards.test.js
 │   ├── automations.test.js
 │   ├── filters.test.js

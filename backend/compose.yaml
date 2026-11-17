@@ -1,0 +1,16 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      FLOWBOARD_DATABASE_PATH: /app/data/flowboard.db
+      FLOWBOARD_AUTH_REQUIRED: "true"
+      FLOWBOARD_AUTH_SECRET: ${FLOWBOARD_AUTH_SECRET:?Set FLOWBOARD_AUTH_SECRET}
+      FLOWBOARD_CORS_ORIGINS: ${FLOWBOARD_CORS_ORIGINS:-http://localhost:4173}
+    volumes:
+      - flowboard-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  flowboard-data:

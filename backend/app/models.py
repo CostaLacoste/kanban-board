@@ -145,6 +145,7 @@ class AutomationSettings(ApiModel):
 
 class WorkspacePayload(ApiModel):
     version: int = 4
+    revision: int = Field(default=0, ge=0)
     active_board_id: str = Field(default="default", alias="activeBoardId")
     boards: list[BoardOut]
     tasks: list[TaskCreate]
@@ -161,6 +162,7 @@ class WorkspacePayload(ApiModel):
 
 class WorkspaceOut(ApiModel):
     version: int = 4
+    revision: int
     active_board_id: str = Field(alias="activeBoardId")
     boards: list[BoardOut]
     tasks: list[TaskOut]
@@ -179,4 +181,91 @@ class HealthOut(ApiModel):
     status: Literal["ok"]
     service: str
     version: str
+
+
+class RegisterRequest(ApiModel):
+    email: Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True, min_length=3, max_length=254)]
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)]
+    password: Annotated[str, StringConstraints(min_length=8, max_length=128)]
+
+
+class LoginRequest(ApiModel):
+    email: Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True, min_length=3, max_length=254)]
+    password: str
+
+
+class UserOut(ApiModel):
+    id: str
+    email: str
+    name: str
+    role: Literal["owner", "editor", "viewer"]
+    created_at: str = Field(alias="createdAt")
+
+
+class AuthToken(ApiModel):
+    access_token: str = Field(alias="accessToken")
+    token_type: Literal["bearer"] = Field(default="bearer", alias="tokenType")
+    user: UserOut
+
+
+class MemberUpdate(ApiModel):
+    email: str
+    role: Literal["owner", "editor", "viewer"]
+
+
+class ApiTokenCreate(ApiModel):
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)]
+
+
+class ApiTokenOut(ApiModel):
+    id: str
+    name: str
+    token: str | None = None
+    created_at: str = Field(alias="createdAt")
+    last_used_at: str | None = Field(default=None, alias="lastUsedAt")
+
+
+class SavedFilterCreate(ApiModel):
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=60)]
+    query: dict[str, Any]
+
+
+class SavedFilterOut(SavedFilterCreate):
+    id: str
+    created_at: str = Field(alias="createdAt")
+
+
+class NotificationOut(ApiModel):
+    id: str
+    kind: str
+    title: str
+    body: str
+    read_at: str | None = Field(default=None, alias="readAt")
+    created_at: str = Field(alias="createdAt")
+
+
+class NotificationPreferences(ApiModel):
+    in_app_enabled: bool = Field(default=True, alias="inAppEnabled")
+    push_enabled: bool = Field(default=True, alias="pushEnabled")
+    email_enabled: bool = Field(default=False, alias="emailEnabled")
+
+
+class WebhookCreate(ApiModel):
+    url: Annotated[str, StringConstraints(strip_whitespace=True, min_length=8, max_length=500)]
+    events: list[str] = Field(default_factory=lambda: ["workspace.updated"], max_length=20)
+
+
+class WebhookOut(ApiModel):
+    id: str
+    url: str
+    events: list[str]
+    active: bool
+    created_at: str = Field(alias="createdAt")
+
+
+class RevisionOut(ApiModel):
+    id: str
+    revision: int
+    actor_id: str | None = Field(default=None, alias="actorId")
+    created_at: str = Field(alias="createdAt")
 

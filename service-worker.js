@@ -1,4 +1,4 @@
-const CACHE_NAME = "flowboard-v7";
+const CACHE_NAME = "flowboard-v8";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -9,6 +9,7 @@ const APP_SHELL = [
   "./css/overlays.css?v=7",
   "./css/variables.css?v=7",
   "./js/main.js",
+  "./js/api.js",
   "./js/automations.js",
   "./js/boards.js",
   "./js/drag-drop.js",
