@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,6 +15,7 @@ from .models import (
     BatchTaskUpdate,
     BoardCreate,
     BoardOut,
+    CommentCreate,
     TaskCreate,
     TaskOut,
     TaskUpdate,
@@ -103,6 +105,122 @@ class Repository:
         task = json.loads(row["payload"])
         task["attachments"] = self._attachment_metadata(connection, row["id"])
         return task
+
+    @staticmethod
+    def _comment_from_row(row: Any) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "taskId": row["task_id"],
+            "author": row["author"],
+            "authorId": row["user_id"],
+            "text": row["body"],
+            "mentions": json.loads(row["mentions"] or "[]"),
+            "parentId": row["parent_id"],
+            "createdAt": row["created_at"],
+            "editedAt": row["edited_at"],
+        }
+
+    def list_comments(self, task_id: str) -> list[dict[str, Any]] | None:
+        with self.database._lock, self.database.connect() as connection:
+            task = connection.execute("SELECT payload FROM tasks WHERE id=?", (task_id,)).fetchone()
+            if task is None:
+                return None
+            rows = connection.execute(
+                "SELECT * FROM task_comments WHERE task_id=? ORDER BY created_at", (task_id,)
+            ).fetchall()
+            if rows:
+                return [self._comment_from_row(row) for row in rows]
+            legacy = json.loads(task["payload"]).get("comments") or []
+            return [{**comment, "taskId": task_id} for comment in legacy]
+
+    def add_comment(
+        self,
+        task_id: str,
+        data: CommentCreate,
+        user_id: str | None,
+        author: str,
+    ) -> dict[str, Any] | None:
+        comment_id = data.id or str(uuid4())
+        with self.database._lock, self.database.connect() as connection:
+            task_row = connection.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+            if task_row is None:
+                return None
+            existing = connection.execute("SELECT * FROM task_comments WHERE id=?", (comment_id,)).fetchone()
+            if existing:
+                return self._comment_from_row(existing)
+            if data.parent_id:
+                parent = connection.execute(
+                    "SELECT 1 FROM task_comments WHERE id=? AND task_id=?", (data.parent_id, task_id)
+                ).fetchone()
+                if parent is None:
+                    raise ValueError("Parent comment not found")
+
+            tokens = {
+                token.rstrip(".,;:!?").lower()
+                for token in re.findall(r"@([^\s]+)", data.text)
+            }
+            mentioned_users: list[dict[str, Any]] = []
+            for member in connection.execute("SELECT id,email,name FROM users").fetchall():
+                aliases = {
+                    member["email"].lower(),
+                    member["email"].split("@", 1)[0].lower(),
+                    member["name"].lower().replace(" ", ""),
+                }
+                if tokens & aliases and member["id"] != user_id:
+                    mentioned_users.append(dict(member))
+
+            created_at = utc_now()
+            mention_ids = [member["id"] for member in mentioned_users]
+            connection.execute(
+                "INSERT INTO task_comments(id,task_id,user_id,author,body,mentions,parent_id,created_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    comment_id, task_id, user_id, author, data.text,
+                    json.dumps(mention_ids), data.parent_id, created_at,
+                ),
+            )
+            task = json.loads(task_row["payload"])
+            comment = {
+                "id": comment_id,
+                "taskId": task_id,
+                "author": author,
+                "authorId": user_id,
+                "text": data.text,
+                "mentions": mention_ids,
+                "parentId": data.parent_id,
+                "createdAt": created_at,
+                "editedAt": None,
+            }
+            embedded = [
+                {key: value for key, value in item.items() if key != "taskId"}
+                for item in task.get("comments", [])
+            ]
+            if not any(item.get("id") == comment_id for item in embedded):
+                embedded.append({key: value for key, value in comment.items() if key != "taskId"})
+            task["comments"] = embedded[-30:]
+            self._save_task(connection, task)
+            for member in mentioned_users:
+                connection.execute(
+                    "INSERT INTO notifications(id,user_id,kind,title,body,created_at) VALUES (?,?,?,?,?,?)",
+                    (
+                        str(uuid4()), member["id"], "mention", "You were mentioned",
+                        f"{author}: {data.text[:180]}", created_at,
+                    ),
+                )
+            return comment
+
+    def _restore_embedded_comments(self, connection: Any, task: dict[str, Any]) -> None:
+        for comment in task.get("comments") or []:
+            connection.execute(
+                "INSERT INTO task_comments(id,task_id,user_id,author,body,mentions,parent_id,created_at,edited_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
+                (
+                    comment.get("id") or str(uuid4()), task["id"], comment.get("authorId"),
+                    comment.get("author") or "User", comment.get("text") or "",
+                    json.dumps(comment.get("mentions") or []), comment.get("parentId"),
+                    comment.get("createdAt") or utc_now(), comment.get("editedAt"),
+                ),
+            )
 
     def list_tasks(self, board_id: str | None = None, archived: bool | None = None) -> list[dict[str, Any]]:
         clauses: list[str] = []
@@ -374,6 +492,7 @@ class Repository:
                 task["createdAt"] = task.get("createdAt") or utc_now()
                 task["completedAt"] = task.get("completedAt") or (utc_now() if task["status"] == "done" else "")
                 self._save_task(connection, task)
+                self._restore_embedded_comments(connection, task)
             retained_task_ids = {task["id"] for task in tasks}
             for attachment in attachments:
                 if attachment["task_id"] not in retained_task_ids:
@@ -401,14 +520,16 @@ class Repository:
     def record_revision(self, snapshot: dict[str, Any], actor_id: str | None) -> None:
         with self.database._lock, self.database.connect() as connection:
             connection.execute(
-                "INSERT OR REPLACE INTO revisions(id,revision,actor_id,snapshot,created_at) VALUES (?,?,?,?,?)",
+                "INSERT INTO revisions(id,revision,actor_id,snapshot,created_at) VALUES (?,?,?,?,?) "
+                "ON CONFLICT(revision) DO UPDATE SET id=excluded.id,actor_id=excluded.actor_id,"
+                "snapshot=excluded.snapshot,created_at=excluded.created_at",
                 (str(uuid4()), snapshot["revision"], actor_id, json.dumps(snapshot, ensure_ascii=False), utc_now()),
             )
             old = connection.execute(
-                "SELECT id FROM revisions ORDER BY revision DESC LIMIT -1 OFFSET 50"
+                "SELECT id FROM revisions ORDER BY revision DESC"
             ).fetchall()
-            if old:
-                connection.executemany("DELETE FROM revisions WHERE id=?", [(row["id"],) for row in old])
+            if len(old) > 50:
+                connection.executemany("DELETE FROM revisions WHERE id=?", [(row["id"],) for row in old[50:]])
 
     def list_revisions(self) -> list[dict[str, Any]]:
         with self.database._lock, self.database.connect() as connection:

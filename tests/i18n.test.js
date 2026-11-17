@@ -44,7 +44,10 @@ test("центр продуктивности полностью перевед�
 });
 
 test("новые инструменты полностью переведены на все языки", () => {
-  const prefixes = ["command.", "batch.", "time.", "attachment.", "automation."];
+  const prefixes = [
+    "command.", "batch.", "time.", "attachment.", "automation.",
+    "account.", "comment.", "collaboration.",
+  ];
   const featureKeys = getTranslationKeys("ru").filter((key) =>
     prefixes.some((prefix) => key.startsWith(prefix)),
   );

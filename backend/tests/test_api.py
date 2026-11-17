@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings
+from app.database import adapt_postgres_query, adapt_postgres_schema
 from app.main import create_app
 
 
@@ -237,4 +238,52 @@ def test_webhooks_and_realtime(client: TestClient) -> None:
         message = websocket.receive_json()
         assert message["type"] == "connected"
         assert "revision" in message
+
+
+def test_comments_mentions_and_notifications(client: TestClient) -> None:
+    owner = register_user(client, "owner-comments@example.com", "Owner")
+    editor = register_user(client, "editor-comments@example.com", "Editor")
+    task = client.post("/api/v1/tasks", json={"title": "Обсуждение"}).json()
+    comment = client.post(
+        f"/api/v1/tasks/{task['id']}/comments",
+        headers=auth_headers(owner["accessToken"]),
+        json={"id": "comment-1", "text": "@Editor проверь, пожалуйста"},
+    )
+    assert comment.status_code == 201
+    assert comment.json()["author"] == "Owner"
+    assert comment.json()["mentions"] == [editor["user"]["id"]]
+    assert client.get(f"/api/v1/tasks/{task['id']}/comments").json()[0]["id"] == "comment-1"
+    notifications = client.get(
+        "/api/v1/notifications", headers=auth_headers(editor["accessToken"])
+    ).json()
+    assert notifications[0]["kind"] == "mention"
+
+
+def test_realtime_presence_and_shared_drafts(client: TestClient) -> None:
+    first = register_user(client, "first-realtime@example.com", "First")
+    second = register_user(client, "second-realtime@example.com", "Second")
+    first_url = f"/api/v1/realtime?token={first['accessToken']}&clientId=first-tab"
+    second_url = f"/api/v1/realtime?token={second['accessToken']}&clientId=second-tab"
+    with client.websocket_connect(first_url) as first_socket:
+        first_socket.receive_json()
+        with client.websocket_connect(second_url) as second_socket:
+            second_socket.receive_json()
+            first_socket.send_json({"type": "presence", "taskId": "task-1"})
+            presence = first_socket.receive_json()
+            assert presence["type"] == "presence.updated"
+            assert presence["users"][0]["name"] == "First"
+            assert second_socket.receive_json()["type"] == "presence.updated"
+            first_socket.send_json({
+                "type": "task.draft", "taskId": "task-1", "field": "title", "value": "Новый заголовок"
+            })
+            draft = second_socket.receive_json()
+            assert draft["type"] == "task.draft"
+            assert draft["actor"]["name"] == "First"
+
+
+def test_postgres_sql_compatibility_helpers() -> None:
+    assert adapt_postgres_query("SELECT * FROM tasks WHERE id=? AND status=?") == (
+        "SELECT * FROM tasks WHERE id=%s AND status=%s"
+    )
+    assert "BYTEA" in adapt_postgres_schema("CREATE TABLE files(content BLOB NOT NULL)")
 

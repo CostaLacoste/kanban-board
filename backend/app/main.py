@@ -27,6 +27,8 @@ from .models import (
     BoardCreate,
     BoardOut,
     BoardUpdate,
+    CommentCreate,
+    CommentOut,
     HealthOut,
     ApiTokenCreate,
     ApiTokenOut,
@@ -54,7 +56,7 @@ from .realtime import RealtimeManager
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     config = settings or Settings.from_env()
-    database = Database(config.database_path)
+    database = Database(config.database_path, config.database_url)
     repository = Repository(database)
     auth = AuthService(database, config)
     realtime = RealtimeManager()
@@ -225,6 +227,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not repository.delete_task(task_id):
             raise HTTPException(status_code=404, detail="Task not found")
         return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @router.get("/tasks/{task_id}/comments", response_model=list[CommentOut], tags=["comments"])
+    def list_task_comments(task_id: str) -> list[dict]:
+        comments = repository.list_comments(task_id)
+        if comments is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        return comments
+
+    @router.post(
+        "/tasks/{task_id}/comments",
+        response_model=CommentOut,
+        status_code=status.HTTP_201_CREATED,
+        tags=["comments"],
+    )
+    async def create_task_comment(task_id: str, data: CommentCreate, request: Request) -> dict:
+        actor: Actor = request.state.actor
+        try:
+            comment = repository.add_comment(
+                task_id,
+                data,
+                actor.id if actor.authenticated else None,
+                actor.name,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        if comment is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        await realtime.broadcast({"type": "comment.created", "taskId": task_id, "comment": comment})
+        return comment
 
     @router.post("/tasks/{task_id}/timer/start", response_model=TaskOut, tags=["time tracking"])
     def start_task_timer(task_id: str) -> dict:
@@ -431,18 +462,48 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(router)
 
     @app.websocket("/api/v1/realtime")
-    async def realtime_socket(websocket: WebSocket, token: str | None = None) -> None:
+    async def realtime_socket(
+        websocket: WebSocket,
+        token: str | None = None,
+        client_id: Annotated[str, Query(alias="clientId")] = "browser",
+    ) -> None:
         actor = auth.authenticate(token)
         if config.auth_required and actor is None:
             await websocket.close(code=4401)
             return
-        await realtime.connect(websocket)
-        await websocket.send_json({"type": "connected", "revision": repository.get_workspace()["revision"]})
+        actor = actor or Actor.guest()
+        session = await realtime.connect(websocket, actor, client_id[:100])
+        await websocket.send_json({
+            "type": "connected",
+            "revision": repository.get_workspace()["revision"],
+            "user": {"id": actor.id, "name": actor.name, "role": actor.role},
+            "presence": realtime.presence(),
+        })
         try:
             while True:
-                await websocket.receive_text()
+                message = await websocket.receive_json()
+                message_type = message.get("type")
+                if message_type == "presence":
+                    await realtime.update_presence(websocket, str(message.get("taskId") or "")[:100] or None)
+                elif message_type == "task.draft" and session.role != "viewer":
+                    field = str(message.get("field") or "")
+                    allowed_fields = {
+                        "title", "description", "status", "priority", "deadline", "assignee", "tags",
+                    }
+                    if field not in allowed_fields:
+                        continue
+                    value = message.get("value")
+                    if not isinstance(value, (str, list)):
+                        continue
+                    await realtime.broadcast({
+                        "type": "task.draft",
+                        "taskId": str(message.get("taskId") or "")[:100],
+                        "field": field,
+                        "value": value,
+                        "actor": {"id": actor.id, "name": actor.name},
+                    }, exclude=websocket)
         except WebSocketDisconnect:
-            realtime.disconnect(websocket)
+            await realtime.disconnect(websocket)
 
     @app.get("/", include_in_schema=False)
     def root() -> dict[str, str]:

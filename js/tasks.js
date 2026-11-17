@@ -71,8 +71,12 @@ function normalizeTaskData(taskData) {
       ? taskData.comments.map((comment) => ({
           id: String(comment?.id || createId()),
           author: String(comment?.author || "User").trim().slice(0, 50),
+          authorId: comment?.authorId ? String(comment.authorId) : null,
           text: String(comment?.text || "").trim().slice(0, 500),
+          mentions: Array.isArray(comment?.mentions) ? comment.mentions.map(String).slice(0, 20) : [],
+          parentId: comment?.parentId ? String(comment.parentId) : null,
           createdAt: String(comment?.createdAt || new Date().toISOString()),
+          editedAt: comment?.editedAt ? String(comment.editedAt) : null,
         })).filter((comment) => comment.text).slice(-30)
       : [],
     attachments: Array.isArray(taskData.attachments)

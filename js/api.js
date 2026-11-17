@@ -2,6 +2,7 @@ const API_URL_KEY = "flowboard-api-url";
 const API_TOKEN_KEY = "flowboard-api-token";
 const SYNC_QUEUE_KEY = "flowboard-api-sync-queue";
 const REVISION_KEY = "flowboard-api-revision";
+const CLIENT_ID_KEY = "flowboard-api-client-id";
 
 let syncTimer = null;
 let socket = null;
@@ -15,13 +16,24 @@ function storageSet(key, value) {
   if (typeof localStorage !== "undefined") localStorage.setItem(key, value);
 }
 
+function storageRemove(key) {
+  if (typeof localStorage !== "undefined") localStorage.removeItem(key);
+}
+
 export function getApiBaseUrl() {
   return storageGet(API_URL_KEY).trim().replace(/\/$/, "");
 }
 
-export function setApiConfiguration(url, token = "") {
+export function setApiConfiguration(url, token = null) {
   storageSet(API_URL_KEY, String(url || "").trim().replace(/\/$/, ""));
-  storageSet(API_TOKEN_KEY, token);
+  if (token !== null) storageSet(API_TOKEN_KEY, token);
+}
+
+export function getApiConfiguration() {
+  return {
+    url: getApiBaseUrl(),
+    hasToken: Boolean(storageGet(API_TOKEN_KEY)),
+  };
 }
 
 export function getRemoteRevision() {
@@ -52,6 +64,63 @@ async function apiRequest(path, options = {}) {
   }
   if (response.status === 204) return null;
   return response.json();
+}
+
+async function authenticate(path, payload) {
+  const result = await apiRequest(path, { method: "POST", body: JSON.stringify(payload) });
+  storageSet(API_TOKEN_KEY, result.accessToken);
+  return result.user;
+}
+
+export function registerAccount(payload) {
+  return authenticate("/auth/register", payload);
+}
+
+export function loginAccount(payload) {
+  return authenticate("/auth/login", payload);
+}
+
+export async function getCurrentAccount() {
+  if (!getApiBaseUrl() || !storageGet(API_TOKEN_KEY)) return null;
+  try {
+    return await apiRequest("/auth/me");
+  } catch {
+    return null;
+  }
+}
+
+export async function getAccountMembers() {
+  try {
+    return await apiRequest("/members");
+  } catch {
+    return [];
+  }
+}
+
+export function updateAccountMember(email, role) {
+  return apiRequest("/members", {
+    method: "PUT",
+    body: JSON.stringify({ email, role }),
+  });
+}
+
+export function logoutAccount() {
+  storageRemove(API_TOKEN_KEY);
+  storageRemove(REVISION_KEY);
+  socket?.close();
+  socket = null;
+}
+
+export async function createTaskComment(taskId, comment) {
+  if (!getApiBaseUrl()) return null;
+  try {
+    return await apiRequest(`/tasks/${encodeURIComponent(taskId)}/comments`, {
+      method: "POST",
+      body: JSON.stringify(comment),
+    });
+  } catch {
+    return null;
+  }
 }
 
 export async function loadRemoteWorkspace() {
@@ -153,18 +222,36 @@ export function getAttachmentUrl(attachment) {
   return base ? `${base.replace(/\/api\/v1$/, "")}${attachment.url}` : attachment.url;
 }
 
-export function connectRealtime(onUpdate) {
+export function connectRealtime(onUpdate, onEvent = () => {}) {
   const base = getApiBaseUrl();
   if (!base || typeof WebSocket === "undefined") return () => {};
   const token = storageGet(API_TOKEN_KEY);
+  let clientId = storageGet(CLIENT_ID_KEY);
+  if (!clientId) {
+    clientId = globalThis.crypto?.randomUUID?.() ?? String(Date.now());
+    storageSet(CLIENT_ID_KEY, clientId);
+  }
   const url = base.replace(/^http/, "ws").replace(/\/api\/v1$/, "/api/v1/realtime");
   socket?.close();
-  socket = new WebSocket(`${url}${token ? `?token=${encodeURIComponent(token)}` : ""}`);
+  const params = new URLSearchParams({ clientId });
+  if (token) params.set("token", token);
+  socket = new WebSocket(`${url}?${params}`);
   socket.addEventListener("message", (event) => {
     try {
       const message = JSON.parse(event.data);
-      if (message.revision > getRemoteRevision()) onUpdate(message);
+      if (message.type === "workspace.updated" && message.revision > getRemoteRevision()) {
+        onUpdate(message);
+      }
+      onEvent(message);
     } catch { /* ignore malformed realtime events */ }
   });
   return () => socket?.close();
+}
+
+export function sendRealtime(message) {
+  if (socket?.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify(message));
+    return true;
+  }
+  return false;
 }

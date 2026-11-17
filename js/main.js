@@ -32,9 +32,19 @@ import { setLanguage, t, translateDocument } from "./i18n.js";
 import { applyAutomations, defaultAutomations } from "./automations.js";
 import {
   connectRealtime,
+  createTaskComment,
   flushWorkspaceQueue,
+  getAccountMembers,
+  getApiConfiguration,
+  getCurrentAccount,
+  loginAccount,
   loadRemoteWorkspace,
+  logoutAccount,
+  registerAccount,
   scheduleWorkspaceSync,
+  sendRealtime,
+  setApiConfiguration,
+  updateAccountMember,
 } from "./api.js";
 import {
   addColumn,
@@ -85,6 +95,15 @@ const batchStatus = document.querySelector("#batch-status");
 const batchPriority = document.querySelector("#batch-priority");
 const attachmentInput = document.querySelector("#task-attachments");
 const attachmentEditor = document.querySelector("[data-attachment-editor]");
+const accountDialog = document.querySelector("#account-dialog");
+const accountApiUrl = document.querySelector("#account-api-url");
+const accountStatus = document.querySelector("[data-account-status]");
+const accountAuth = document.querySelector("[data-account-auth]");
+const accountProfile = document.querySelector("[data-account-profile]");
+const accountMembers = document.querySelector("[data-account-members]");
+const accountButton = document.querySelector("[data-account-button]");
+const commentList = document.querySelector("[data-comment-list]");
+const collaborationStatus = document.querySelector("[data-collaboration-status]");
 
 let activeBoardId = "default";
 let sortMode = "manual";
@@ -103,6 +122,9 @@ let pendingAttachments = [];
 let automations = { ...defaultAutomations };
 let applyingRemoteWorkspace = false;
 let localWorkspaceGeneration = 0;
+let currentAccount = null;
+let remoteMembers = [];
+let draftTimer = null;
 
 function getBoardTasks({ archived = false } = {}) {
   return getTasks().filter(
@@ -264,6 +286,164 @@ function renderAttachmentEditor() {
     row.append(name, remove);
     attachmentEditor.append(row);
   });
+}
+
+function roleLabel(role) {
+  return t(`account.role.${role}`);
+}
+
+function renderAccountPanel() {
+  const configuration = getApiConfiguration();
+  accountApiUrl.value = configuration.url;
+  accountAuth.hidden = Boolean(currentAccount);
+  accountProfile.hidden = !currentAccount;
+  accountStatus.textContent = currentAccount
+    ? t("account.connected", { name: currentAccount.name })
+    : t("account.offline");
+  accountButton.textContent = currentAccount ? `◎ ${currentAccount.name}` : t("account.open");
+  accountMembers.replaceChildren();
+  if (!currentAccount) return;
+  accountProfile.querySelector("[data-account-name]").textContent = currentAccount.name;
+  accountProfile.querySelector("[data-account-email]").textContent = currentAccount.email;
+  accountProfile.querySelector("[data-account-role]").textContent = roleLabel(currentAccount.role);
+  remoteMembers.forEach((member) => {
+    const row = document.createElement("div");
+    row.className = "account-member";
+    const identity = document.createElement("div");
+    const name = document.createElement("strong");
+    name.textContent = member.name;
+    const email = document.createElement("span");
+    email.textContent = member.email;
+    identity.append(name, email);
+    if (currentAccount.role === "owner") {
+      const select = document.createElement("select");
+      ["owner", "editor", "viewer"].forEach((role) => {
+        select.add(new Option(roleLabel(role), role));
+      });
+      select.value = member.role;
+      select.setAttribute("aria-label", `${member.name}: ${roleLabel(member.role)}`);
+      select.addEventListener("change", async () => {
+        try {
+          await updateAccountMember(member.email, select.value);
+          await refreshAccount();
+        } catch {
+          select.value = member.role;
+          showNotification(t("account.error"), "error");
+        }
+      });
+      row.append(identity, select);
+    } else {
+      const role = document.createElement("span");
+      role.textContent = roleLabel(member.role);
+      row.append(identity, role);
+    }
+    accountMembers.append(row);
+  });
+}
+
+async function refreshAccount() {
+  currentAccount = await getCurrentAccount();
+  remoteMembers = currentAccount ? await getAccountMembers() : [];
+  if (remoteMembers.length > 0) {
+    members = remoteMembers.map((member) => member.name);
+    saveSetting("members", members);
+    syncTaskFormOptions(form.elements.taskId.value);
+  }
+  renderAccountPanel();
+}
+
+async function authenticateAccount(mode) {
+  const email = document.querySelector("#account-email").value.trim();
+  const password = document.querySelector("#account-password").value;
+  const name = document.querySelector("#account-name").value.trim();
+  try {
+    currentAccount = mode === "register"
+      ? await registerAccount({ email, password, name })
+      : await loginAccount({ email, password });
+    document.querySelector("#account-password").value = "";
+    await refreshAccount();
+    void initializeRemoteWorkspace();
+  } catch (error) {
+    accountStatus.textContent = `${t("account.error")}: ${error.message}`;
+    showNotification(t("account.error"), "error");
+  }
+}
+
+function appendCommentText(container, text) {
+  const parts = String(text).split(/(@[^\s]+)/g);
+  parts.forEach((part) => {
+    if (part.startsWith("@")) {
+      const mention = document.createElement("mark");
+      mention.className = "comment-mention";
+      mention.textContent = part;
+      container.append(mention);
+    } else {
+      container.append(document.createTextNode(part));
+    }
+  });
+}
+
+function renderTaskComments(task) {
+  commentList.replaceChildren();
+  const comments = task?.comments ?? [];
+  commentList.hidden = !task;
+  if (!task) return;
+  if (comments.length === 0) {
+    const empty = document.createElement("p");
+    empty.textContent = t("comment.empty");
+    commentList.append(empty);
+    return;
+  }
+  comments.forEach((comment) => {
+    const item = document.createElement("article");
+    item.className = "comment-item";
+    const meta = document.createElement("div");
+    meta.className = "comment-item__meta";
+    const author = document.createElement("strong");
+    author.textContent = comment.author;
+    const date = document.createElement("time");
+    date.dateTime = comment.createdAt;
+    date.textContent = new Intl.DateTimeFormat(undefined, { dateStyle: "short", timeStyle: "short" })
+      .format(new Date(comment.createdAt));
+    const body = document.createElement("p");
+    appendCommentText(body, comment.text);
+    meta.append(author, date);
+    item.append(meta, body);
+    commentList.append(item);
+  });
+}
+
+function handleRealtimeEvent(message) {
+  const activeTaskId = form.elements.taskId.value;
+  if (message.type === "presence.updated" && message.taskId === activeTaskId) {
+    const names = [...new Set((message.users || []).map((user) => user.name))];
+    collaborationStatus.hidden = names.length < 2;
+    collaborationStatus.textContent = names.length >= 2
+      ? t("collaboration.editing", { names: names.join(", ") })
+      : "";
+  }
+  if (message.type === "task.draft" && message.taskId === activeTaskId) {
+    const input = form.elements[message.field];
+    if (input && document.activeElement !== input) {
+      const value = Array.isArray(message.value) ? message.value.join(", ") : message.value;
+      if (input instanceof HTMLSelectElement && ![...input.options].some((option) => option.value === value)) {
+        input.add(new Option(value, value));
+      }
+      input.value = value;
+    }
+    collaborationStatus.hidden = false;
+    collaborationStatus.textContent = t("collaboration.remoteDraft", { name: message.actor.name });
+  }
+  if (message.type === "comment.created") {
+    const task = getTaskById(message.taskId);
+    if (!task || task.comments?.some((comment) => comment.id === message.comment.id)) return;
+    setTasks(getTasks().map((item) => item.id === task.id
+      ? { ...item, comments: [...(item.comments || []), message.comment].slice(-30) }
+      : item));
+    saveTasks(getTasks());
+    if (activeTaskId === task.id) renderTaskComments(getTaskById(task.id));
+    refreshBoard();
+  }
 }
 
 function readAttachment(file) {
@@ -576,7 +756,7 @@ async function initializeRemoteWorkspace() {
     if (latest && localWorkspaceGeneration === generationBeforeLoad) {
       applyRemoteWorkspace(latest);
     }
-  });
+  }, handleRealtimeEvent);
 }
 
 function checkDeadlineReminders() {
@@ -672,6 +852,8 @@ function openCreateDialog() {
   pendingAttachments = [];
   renderAttachmentEditor();
   document.querySelector("[data-comment-field]").hidden = true;
+  commentList.hidden = true;
+  collaborationStatus.hidden = true;
   taskDialogTitle.textContent = t("task.new");
   taskDialog.showModal();
   form.elements.title.focus();
@@ -706,8 +888,11 @@ function openEditDialog(taskId) {
   renderAttachmentEditor();
   document.querySelector("[data-comment-field]").hidden = false;
   form.elements.comment.value = "";
+  renderTaskComments(task);
+  collaborationStatus.hidden = true;
   taskDialogTitle.textContent = t("task.edit");
   taskDialog.showModal();
+  sendRealtime({ type: "presence", taskId: task.id });
   form.elements.title.focus();
 }
 
@@ -894,17 +1079,23 @@ form.addEventListener("submit", (event) => {
   const isEditing = Boolean(taskData.taskId);
   const currentTask = isEditing ? getTaskById(taskData.taskId) : null;
   const comment = String(taskData.comment ?? "").trim();
+  let newComment = null;
   taskData.comments = [...(currentTask?.comments ?? [])];
   taskData.attachments = pendingAttachments;
   taskData.timeSpentSeconds = currentTask?.timeSpentSeconds ?? 0;
   taskData.timerStartedAt = currentTask?.timerStartedAt ?? "";
   if (comment) {
-    taskData.comments.push({
+    newComment = {
       id: globalThis.crypto?.randomUUID?.() ?? String(Date.now()),
-      author: loadSetting("profile", "User"),
+      author: currentAccount?.name ?? loadSetting("profile", "User"),
+      authorId: currentAccount?.id ?? null,
       text: comment,
+      mentions: [],
+      parentId: null,
       createdAt: new Date().toISOString(),
-    });
+      editedAt: null,
+    };
+    taskData.comments.push(newComment);
   }
   delete taskData.comment;
 
@@ -923,10 +1114,28 @@ form.addEventListener("submit", (event) => {
     }
     taskDialog.close();
     commitChanges(t(isEditing ? "notice.taskUpdated" : "notice.taskCreated"));
+    if (isEditing && newComment) {
+      void createTaskComment(taskData.taskId, {
+        id: newComment.id,
+        text: newComment.text,
+        parentId: newComment.parentId,
+      });
+    }
   } catch (error) {
     discardLastSnapshot();
     showNotification(error.message, "error");
   }
+});
+
+form.addEventListener("input", (event) => {
+  const taskId = form.elements.taskId.value;
+  const field = event.target?.name;
+  const allowed = new Set(["title", "description", "status", "priority", "deadline", "assignee", "tags"]);
+  if (!taskId || !allowed.has(field)) return;
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(() => {
+    sendRealtime({ type: "task.draft", taskId, field, value: event.target.value });
+  }, 180);
 });
 
 templateSelect.addEventListener("change", () => {
@@ -950,6 +1159,26 @@ document.addEventListener("click", (event) => {
 
   switch (button.dataset.action) {
     case "open-task-dialog": openCreateDialog(); break;
+    case "open-account":
+      renderAccountPanel();
+      accountDialog.showModal();
+      void refreshAccount();
+      break;
+    case "close-account": accountDialog.close(); break;
+    case "save-api-url":
+      setApiConfiguration(accountApiUrl.value);
+      accountStatus.textContent = t("account.apiSaved");
+      void refreshAccount();
+      void initializeRemoteWorkspace();
+      break;
+    case "account-login": void authenticateAccount("login"); break;
+    case "account-register": void authenticateAccount("register"); break;
+    case "account-logout":
+      logoutAccount();
+      currentAccount = null;
+      remoteMembers = [];
+      renderAccountPanel();
+      break;
     case "open-command-palette":
       commandSearch.value = "";
       renderCommandPalette();
@@ -1193,6 +1422,7 @@ languageSelect.addEventListener("change", () => {
   translateDocument();
   updateUndoButton();
   refreshBoard();
+  renderAccountPanel();
 });
 
 importInput.addEventListener("change", () => {
@@ -1304,10 +1534,16 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
-[taskDialog, deleteDialog, archiveDialog, productivityDialog, commandDialog].forEach((dialog) => {
+[taskDialog, deleteDialog, archiveDialog, productivityDialog, commandDialog, accountDialog].forEach((dialog) => {
   dialog.addEventListener("click", (event) => {
     if (event.target === dialog) dialog.close();
   });
+});
+
+taskDialog.addEventListener("close", () => {
+  clearTimeout(draftTimer);
+  sendRealtime({ type: "presence", taskId: null });
+  collaborationStatus.hidden = true;
 });
 
 initDragAndDrop(board, (taskId, newStatus, beforeTaskId) => {
@@ -1383,5 +1619,7 @@ document.body.dataset.theme = theme;
 applyAccessibility();
 updateUndoButton();
 refreshBoard();
+renderAccountPanel();
 window.setInterval(checkDeadlineReminders, 60 * 60 * 1000);
+void refreshAccount();
 void initializeRemoteWorkspace();

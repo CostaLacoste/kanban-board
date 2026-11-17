@@ -220,3 +220,58 @@ test("новые инструменты помещаются на мобильн
   );
   expect(hasHorizontalOverflow).toBe(false);
 });
+
+test("настраивает API и регистрирует аккаунт", async ({ page }) => {
+  const user = {
+    id: "user-1",
+    email: "anna@example.com",
+    name: "Анна",
+    role: "owner",
+    createdAt: new Date().toISOString(),
+  };
+  await page.route(/flowboard\.test\/api\/v1\//, async (route) => {
+    const corsHeaders = {
+      "access-control-allow-origin": "http://127.0.0.1:4173",
+      "access-control-allow-credentials": "true",
+      "access-control-allow-headers": "authorization,content-type",
+      "access-control-allow-methods": "GET,POST,PUT,OPTIONS",
+    };
+    if (route.request().method() === "OPTIONS") {
+      await route.fulfill({ status: 204, headers: corsHeaders });
+      return;
+    }
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname.endsWith("/auth/register")) {
+      await route.fulfill({ headers: corsHeaders, json: { accessToken: "test-token", tokenType: "bearer", user } });
+    } else if (pathname.endsWith("/auth/me")) {
+      await route.fulfill({ headers: corsHeaders, json: user });
+    } else if (pathname.endsWith("/members")) {
+      await route.fulfill({ headers: corsHeaders, json: [user] });
+    } else {
+      await route.fulfill({ status: 503, headers: corsHeaders, json: { detail: "offline in test" } });
+    }
+  });
+
+  await page.getByRole("button", { name: /Аккаунт/ }).click();
+  await page.locator("#account-api-url").fill("http://flowboard.test/api/v1");
+  await page.getByRole("button", { name: "Сохранить адрес" }).click();
+  await page.locator("#account-name").fill("Анна");
+  await page.locator("#account-email").fill("anna@example.com");
+  await page.locator("#account-password").fill("strong-password");
+  await page.getByRole("button", { name: "Регистрация" }).click();
+  await expect(page.locator("[data-account-profile]")).toContainText("Анна");
+  await expect(page.locator("[data-account-profile]")).toContainText("Владелец");
+});
+
+test("показывает комментарии и упоминания в задаче", async ({ page }) => {
+  await page.getByRole("button", { name: "Новая задача" }).click();
+  await page.locator("#task-title").fill("Обсудить макет");
+  await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+  await page.getByRole("button", { name: "Изменить" }).click();
+  await expect(page.locator("[data-comment-list]")).toContainText("Комментариев пока нет");
+  await page.locator("#task-comment").fill("@Анна посмотри новый вариант");
+  await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+  await page.getByRole("button", { name: "Изменить" }).click();
+  await expect(page.locator("[data-comment-list]")).toContainText("@Анна");
+  await expect(page.locator("[data-comment-list] mark")).toHaveText("@Анна");
+});

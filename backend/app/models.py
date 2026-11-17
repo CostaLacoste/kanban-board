@@ -42,8 +42,22 @@ class ChecklistItem(ApiModel):
 class Comment(ApiModel):
     id: str = ""
     author: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)] = "User"
+    author_id: str | None = Field(default=None, alias="authorId")
     text: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
+    mentions: list[str] = Field(default_factory=list, max_length=20)
+    parent_id: str | None = Field(default=None, alias="parentId")
     created_at: str = Field(default_factory=utc_now, alias="createdAt")
+    edited_at: str | None = Field(default=None, alias="editedAt")
+
+
+class CommentCreate(ApiModel):
+    id: str | None = None
+    text: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
+    parent_id: str | None = Field(default=None, alias="parentId")
+
+
+class CommentOut(Comment):
+    task_id: str = Field(alias="taskId")
 
 
 class AttachmentOut(ApiModel):

@@ -13,6 +13,7 @@ DEFAULT_AUTH_SECRET = "flowboard-local-development-secret-change-me"
 class Settings:
     database_path: Path
     cors_origins: tuple[str, ...]
+    database_url: str = ""
     max_attachment_size: int = 5 * 1024 * 1024
     max_attachments_per_task: int = 5
     auth_secret: str = DEFAULT_AUTH_SECRET
@@ -38,6 +39,7 @@ class Settings:
         return cls(
             database_path=database_path,
             cors_origins=origins,
+            database_url=os.getenv("DATABASE_URL", os.getenv("FLOWBOARD_DATABASE_URL", "")),
             auth_secret=os.getenv("FLOWBOARD_AUTH_SECRET", DEFAULT_AUTH_SECRET),
             auth_required=os.getenv("FLOWBOARD_AUTH_REQUIRED", "false").lower() == "true",
             access_token_minutes=int(os.getenv("FLOWBOARD_ACCESS_TOKEN_MINUTES", "1440")),

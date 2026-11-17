@@ -9,7 +9,7 @@
       content="Flowboard — учебная канбан-доска для управления задачами."
     />
     <title>Flowboard</title>
-    <link rel="stylesheet" href="./css/style.css?v=7" />
+    <link rel="stylesheet" href="./css/style.css?v=8" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <script type="module" src="./js/main.js"></script>
   </head>
@@ -22,6 +22,7 @@
       </a>
 
       <div class="header-tools">
+        <button class="header-action" type="button" data-action="open-account" data-account-button data-i18n="account.open">◎ Аккаунт</button>
         <button class="header-action" type="button" data-action="open-command-palette" data-i18n="command.open">⌘K Команды</button>
         <button class="header-action" type="button" data-action="open-productivity-hub" data-i18n="app.hub">
           ◫ Центр
@@ -308,6 +309,8 @@
           </button>
         </div>
 
+        <div class="collaboration-status" data-collaboration-status hidden aria-live="polite"></div>
+
         <input id="task-id" name="taskId" type="hidden" />
 
         <label class="form-field">
@@ -409,9 +412,11 @@
           </div>
         </label>
 
+        <div class="comment-thread" data-comment-list hidden></div>
         <label class="form-field" data-comment-field hidden>
           <span data-i18n="extra.comment">Новый комментарий</span>
           <textarea id="task-comment" name="comment" rows="2" maxlength="500" placeholder="Добавить комментарий..."></textarea>
+          <small data-i18n="comment.mentionHelp">Упомяните участника через @имя или @email.</small>
         </label>
 
         <div class="form-row">
@@ -465,6 +470,59 @@
           <button class="primary-button" type="submit" data-i18n="task.save">Сохранить</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog id="account-dialog" class="dialog" aria-labelledby="account-title">
+      <div class="dialog__content account-panel">
+        <div class="dialog__header">
+          <div>
+            <p class="eyebrow" data-i18n="account.label">Облако / Команда</p>
+            <h2 id="account-title" data-i18n="account.title">Аккаунт Flowboard</h2>
+          </div>
+          <button class="icon-button" type="button" data-action="close-account" data-i18n-aria="hub.close" aria-label="Закрыть">×</button>
+        </div>
+
+        <label class="form-field">
+          <span data-i18n="account.apiUrl">Адрес FastAPI</span>
+          <input id="account-api-url" type="url" placeholder="http://127.0.0.1:8000/api/v1" autocomplete="url" />
+        </label>
+        <button class="secondary-button" type="button" data-action="save-api-url" data-i18n="account.saveApi">Сохранить адрес</button>
+        <p class="account-status" data-account-status aria-live="polite"></p>
+
+        <div class="account-auth" data-account-auth>
+          <div class="form-row">
+            <label class="form-field">
+              <span data-i18n="account.name">Имя</span>
+              <input id="account-name" type="text" maxlength="50" autocomplete="name" />
+            </label>
+            <label class="form-field">
+              <span>Email</span>
+              <input id="account-email" type="email" maxlength="254" autocomplete="email" />
+            </label>
+          </div>
+          <label class="form-field">
+            <span data-i18n="account.password">Пароль</span>
+            <input id="account-password" type="password" minlength="8" maxlength="128" autocomplete="current-password" />
+          </label>
+          <div class="hub-actions">
+            <button class="primary-button" type="button" data-action="account-login" data-i18n="account.login">Войти</button>
+            <button class="secondary-button" type="button" data-action="account-register" data-i18n="account.register">Регистрация</button>
+          </div>
+        </div>
+
+        <div class="account-profile" data-account-profile hidden>
+          <div class="account-profile__identity">
+            <strong data-account-name></strong>
+            <span data-account-email></span>
+            <span class="priority-badge" data-account-role></span>
+          </div>
+          <button class="danger-button" type="button" data-action="account-logout" data-i18n="account.logout">Выйти</button>
+          <section>
+            <p class="eyebrow" data-i18n="account.team">Команда</p>
+            <div class="account-members" data-account-members></div>
+          </section>
+        </div>
+      </div>
     </dialog>
 
     <dialog id="archive-dialog" class="dialog" aria-labelledby="archive-dialog-title">

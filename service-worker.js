@@ -1,13 +1,13 @@
-const CACHE_NAME = "flowboard-v8";
+const CACHE_NAME = "flowboard-v9";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./manifest.webmanifest",
-  "./css/style.css?v=7",
-  "./css/base.css?v=7",
-  "./css/components.css?v=7",
-  "./css/overlays.css?v=7",
-  "./css/variables.css?v=7",
+  "./css/style.css?v=8",
+  "./css/base.css?v=8",
+  "./css/components.css?v=8",
+  "./css/overlays.css?v=8",
+  "./css/variables.css?v=8",
   "./js/main.js",
   "./js/api.js",
   "./js/automations.js",
@@ -40,6 +40,8 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+  const url = new URL(event.request.url);
+  if (url.origin !== self.location.origin) return;
   event.respondWith(
     fetch(event.request)
       .then((response) => {

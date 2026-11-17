@@ -134,6 +134,34 @@ const dictionaries = {
   },
 };
 
+const collaborationTranslations = {
+  ru: {
+    "account.open": "◎ Аккаунт", "account.label": "Облако / Команда", "account.title": "Аккаунт Flowboard", "account.apiUrl": "Адрес FastAPI", "account.saveApi": "Сохранить адрес", "account.name": "Имя", "account.password": "Пароль", "account.login": "Войти", "account.register": "Регистрация", "account.logout": "Выйти", "account.team": "Команда", "account.offline": "Локальный режим", "account.connected": "Подключено: {name}", "account.apiSaved": "Адрес API сохранён", "account.error": "Не удалось подключиться", "account.role.owner": "Владелец", "account.role.editor": "Редактор", "account.role.viewer": "Читатель", "comment.mentionHelp": "Упомяните участника через @имя или @email.", "comment.empty": "Комментариев пока нет.", "collaboration.editing": "Сейчас редактируют: {names}", "collaboration.remoteDraft": "{name} обновляет эту задачу",
+  },
+  en: {
+    "account.open": "◎ Account", "account.label": "Cloud / Team", "account.title": "Flowboard account", "account.apiUrl": "FastAPI address", "account.saveApi": "Save address", "account.name": "Name", "account.password": "Password", "account.login": "Sign in", "account.register": "Register", "account.logout": "Sign out", "account.team": "Team", "account.offline": "Local mode", "account.connected": "Connected: {name}", "account.apiSaved": "API address saved", "account.error": "Connection failed", "account.role.owner": "Owner", "account.role.editor": "Editor", "account.role.viewer": "Viewer", "comment.mentionHelp": "Mention a member with @name or @email.", "comment.empty": "No comments yet.", "collaboration.editing": "Editing now: {names}", "collaboration.remoteDraft": "{name} is updating this task",
+  },
+  ig: {
+    "account.open": "◎ Akaụntụ", "account.label": "Ígwé / Otu", "account.title": "Akaụntụ Flowboard", "account.apiUrl": "Adreesị FastAPI", "account.saveApi": "Chekwaa adreesị", "account.name": "Aha", "account.password": "Okwuntughe", "account.login": "Banye", "account.register": "Debanye aha", "account.logout": "Pụọ", "account.team": "Otu", "account.offline": "Ọnọdụ mpaghara", "account.connected": "Ejikọrọ: {name}", "account.apiSaved": "Echekwara adreesị API", "account.error": "Njikọ dara", "account.role.owner": "Onye nwe", "account.role.editor": "Onye ndezi", "account.role.viewer": "Onye na-agụ", "comment.mentionHelp": "Kpọọ onye otu site na @aha ma ọ bụ @email.", "comment.empty": "Enweghị okwu ugbu a.", "collaboration.editing": "Ndị na-edezi ugbu a: {names}", "collaboration.remoteDraft": "{name} na-emelite ọrụ a",
+  },
+  uz: {
+    "account.open": "◎ Hisob", "account.label": "Bulut / Jamoa", "account.title": "Flowboard hisobi", "account.apiUrl": "FastAPI manzili", "account.saveApi": "Manzilni saqlash", "account.name": "Ism", "account.password": "Parol", "account.login": "Kirish", "account.register": "Ro‘yxatdan o‘tish", "account.logout": "Chiqish", "account.team": "Jamoa", "account.offline": "Mahalliy rejim", "account.connected": "Ulandi: {name}", "account.apiSaved": "API manzili saqlandi", "account.error": "Ulanib bo‘lmadi", "account.role.owner": "Egasi", "account.role.editor": "Muharrir", "account.role.viewer": "Kuzatuvchi", "comment.mentionHelp": "Ishtirokchini @ism yoki @email bilan eslang.", "comment.empty": "Hozircha izoh yo‘q.", "collaboration.editing": "Hozir tahrirlamoqda: {names}", "collaboration.remoteDraft": "{name} bu vazifani yangilamoqda",
+  },
+  uk: {
+    "account.open": "◎ Акаунт", "account.label": "Хмара / Команда", "account.title": "Акаунт Flowboard", "account.apiUrl": "Адреса FastAPI", "account.saveApi": "Зберегти адресу", "account.name": "Ім’я", "account.password": "Пароль", "account.login": "Увійти", "account.register": "Реєстрація", "account.logout": "Вийти", "account.team": "Команда", "account.offline": "Локальний режим", "account.connected": "Підключено: {name}", "account.apiSaved": "Адресу API збережено", "account.error": "Не вдалося підключитися", "account.role.owner": "Власник", "account.role.editor": "Редактор", "account.role.viewer": "Читач", "comment.mentionHelp": "Згадайте учасника через @ім’я або @email.", "comment.empty": "Коментарів ще немає.", "collaboration.editing": "Зараз редагують: {names}", "collaboration.remoteDraft": "{name} оновлює це завдання",
+  },
+  he: {
+    "account.open": "◎ חשבון", "account.label": "ענן / צוות", "account.title": "חשבון Flowboard", "account.apiUrl": "כתובת FastAPI", "account.saveApi": "שמירת כתובת", "account.name": "שם", "account.password": "סיסמה", "account.login": "כניסה", "account.register": "הרשמה", "account.logout": "יציאה", "account.team": "צוות", "account.offline": "מצב מקומי", "account.connected": "מחובר: {name}", "account.apiSaved": "כתובת ה־API נשמרה", "account.error": "החיבור נכשל", "account.role.owner": "בעלים", "account.role.editor": "עורך", "account.role.viewer": "צופה", "comment.mentionHelp": "אזכור חבר באמצעות @שם או @email.", "comment.empty": "אין תגובות עדיין.", "collaboration.editing": "עורכים כעת: {names}", "collaboration.remoteDraft": "{name} מעדכן את המשימה",
+  },
+  yi: {
+    "account.open": "◎ חשבון", "account.label": "וואָלקן / מאַנשאַפֿט", "account.title": "Flowboard חשבון", "account.apiUrl": "FastAPI אַדרעס", "account.saveApi": "היטן אַדרעס", "account.name": "נאָמען", "account.password": "פּאַראָל", "account.login": "אַרײַנקומען", "account.register": "רעגיסטרירן", "account.logout": "אַרויסגיין", "account.team": "מאַנשאַפֿט", "account.offline": "לאָקאַלער מצב", "account.connected": "פֿאַרבונדן: {name}", "account.apiSaved": "API אַדרעס געהיטן", "account.error": "פֿאַרבינדונג דורכגעפֿאַלן", "account.role.owner": "באַזיצער", "account.role.editor": "רעדאַקטאָר", "account.role.viewer": "לייענער", "comment.mentionHelp": "דערמאָנט אַ מיטגליד מיט @נאָמען אָדער @email.", "comment.empty": "נאָך נישטאָ באַמערקונגען.", "collaboration.editing": "רעדאַקטירן איצט: {names}", "collaboration.remoteDraft": "{name} דערהײַנטיקט די אויפֿגאַבע",
+  },
+};
+
+Object.entries(collaborationTranslations).forEach(([language, translations]) => {
+  Object.assign(dictionaries[language], translations);
+});
+
 const locales = {
   ru: "ru-RU", en: "en-US", ig: "ig-NG", uz: "uz-UZ", uk: "uk-UA", he: "he-IL", yi: "yi",
 };
