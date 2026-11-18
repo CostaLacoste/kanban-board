@@ -1,4 +1,4 @@
-export function filterTasks(tasks, search, priority, tag = "all") {
+export function filterTasks(tasks, search, priority, tag = "all", advanced = {}) {
   const normalizedSearch = String(search ?? "").trim().toLowerCase();
 
   return tasks.filter((task) => {
@@ -17,7 +17,13 @@ export function filterTasks(tasks, search, priority, tag = "all") {
     const matchesPriority =
       priority === "all" || task.priority === priority;
     const matchesTag = tag === "all" || tags.includes(tag);
+    const matchesAssignee = !advanced.assignee || advanced.assignee === "all"
+      || String(task.assignee || "") === advanced.assignee;
+    const deadline = String(task.deadline || "");
+    const matchesDeadlineFrom = !advanced.deadlineFrom || (deadline && deadline >= advanced.deadlineFrom);
+    const matchesDeadlineTo = !advanced.deadlineTo || (deadline && deadline <= advanced.deadlineTo);
 
-    return matchesSearch && matchesPriority && matchesTag;
+    return matchesSearch && matchesPriority && matchesTag
+      && matchesAssignee && matchesDeadlineFrom && matchesDeadlineTo;
   });
 }

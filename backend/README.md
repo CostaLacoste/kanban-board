@@ -4,6 +4,9 @@ FastAPI-бэкенд для Flowboard. Локально данные могут 
 production поддерживается PostgreSQL через `DATABASE_URL`. API поддерживает
 local-first режим, JWT, роли, комментарии и упоминания, realtime-присутствие,
 совместные черновики, ревизии, поиск, уведомления, API-токены и webhooks.
+Дополнительно реализованы приглашения, сброс пароля, управление сессиями,
+ветки обсуждений и реакции, наблюдатели, цели и roadmap, persistent job queue,
+межпроцессная realtime-шина и внешнее файловое хранилище.
 
 ## Запуск
 
@@ -30,15 +33,19 @@ uv run fastapi dev app/main.py
 - `POST /api/v1/tasks/{id}/attachments`;
 - `GET/DELETE /api/v1/attachments/{id}`;
 - `GET/PUT /api/v1/automations`;
-- `GET/PUT /api/v1/workspace`.
+- `GET/PUT /api/v1/workspace`;
 - `POST /api/v1/auth/register|login` и `GET /api/v1/auth/me`;
 - `GET/PUT /api/v1/members` и управление API-токенами;
+- `GET/POST /api/v1/invitations` и `GET/DELETE /api/v1/auth/sessions`;
+- `PATCH/DELETE /api/v1/comments/{id}` и реакции/наблюдатели;
 - `GET /api/v1/search/tasks` и `/api/v1/saved-filters`;
+- `GET/POST /api/v1/goals`, `/planning/timeline` и `/planning/workload`;
 - `GET /api/v1/revisions` и восстановление версии;
 - `GET /api/v1/notifications`;
 - `GET/POST/DELETE /api/v1/webhooks`;
 - `WS /api/v1/realtime` — присутствие и совместное редактирование черновика;
-- `GET /api/v1/metrics` и `/api/v1/admin/backup`.
+- `GET /api/v1/metrics` и `/api/v1/admin/backup`;
+- `GET /api/v1/ready`, `GET/POST /api/v1/jobs` и `/notifications/summary`.
 
 ## Авторизация и синхронизация
 
@@ -72,7 +79,12 @@ docker compose up --build
 ```
 
 Compose запускает отдельный PostgreSQL 17 и ожидает его readiness перед
-стартом API. Для внешней управляемой базы задайте `DATABASE_URL` напрямую.
+стартом API. Вложения сохраняются в persistent volume через
+`FLOWBOARD_OBJECT_STORAGE_PATH`; без этой переменной сохраняется совместимый
+режим хранения в базе. Для внешней управляемой базы задайте `DATABASE_URL`
+напрямую. Для ссылок в письмах задайте `FLOWBOARD_PUBLIC_APP_URL`, а для
+доставки писем — `FLOWBOARD_SMTP_HOST`, `FLOWBOARD_SMTP_PORT`,
+`FLOWBOARD_SMTP_USERNAME`, `FLOWBOARD_SMTP_PASSWORD` и `FLOWBOARD_SMTP_FROM`.
 
 ## Перенос SQLite в PostgreSQL
 

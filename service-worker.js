@@ -1,13 +1,13 @@
-const CACHE_NAME = "flowboard-v9";
+const CACHE_NAME = "flowboard-v10";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./manifest.webmanifest",
-  "./css/style.css?v=8",
-  "./css/base.css?v=8",
-  "./css/components.css?v=8",
-  "./css/overlays.css?v=8",
-  "./css/variables.css?v=8",
+  "./css/style.css?v=9",
+  "./css/base.css?v=9",
+  "./css/components.css?v=9",
+  "./css/overlays.css?v=9",
+  "./css/variables.css?v=9",
   "./js/main.js",
   "./js/api.js",
   "./js/automations.js",

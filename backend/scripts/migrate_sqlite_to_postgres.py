@@ -9,20 +9,30 @@ from app.database import Database
 
 
 TABLES = (
-    ("users", "id"),
-    ("workspace_members", "user_id"),
-    ("boards", "id"),
-    ("settings", "key"),
-    ("tasks", "id"),
-    ("attachments", "id"),
-    ("api_tokens", "id"),
-    ("saved_filters", "id"),
-    ("notifications", "id"),
-    ("webhooks", "id"),
-    ("outbox", "id"),
-    ("revisions", "id"),
-    ("task_comments", "id"),
-    ("schema_migrations", "version"),
+    ("users", ("id",)),
+    ("workspace_members", ("user_id",)),
+    ("boards", ("id",)),
+    ("settings", ("key",)),
+    ("tasks", ("id",)),
+    ("attachments", ("id",)),
+    ("attachment_objects", ("attachment_id",)),
+    ("api_tokens", ("id",)),
+    ("saved_filters", ("id",)),
+    ("notifications", ("id",)),
+    ("webhooks", ("id",)),
+    ("outbox", ("id",)),
+    ("revisions", ("id",)),
+    ("task_comments", ("id",)),
+    ("comment_metadata", ("comment_id",)),
+    ("comment_reactions", ("comment_id", "user_id", "emoji")),
+    ("task_watchers", ("task_id", "user_id")),
+    ("invitations", ("id",)),
+    ("auth_sessions", ("id",)),
+    ("password_resets", ("id",)),
+    ("goals", ("id",)),
+    ("jobs", ("id",)),
+    ("realtime_events", ("id",)),
+    ("schema_migrations", ("version",)),
 )
 
 
@@ -43,7 +53,7 @@ def main() -> None:
     copied = 0
     try:
         with target.connect() as destination:
-            for table, primary_key in TABLES:
+            for table, primary_keys in TABLES:
                 exists = source.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
                 ).fetchone()
@@ -58,12 +68,13 @@ def main() -> None:
                 updates = ",".join(
                     f'"{column}"=excluded."{column}"'
                     for column in columns
-                    if column != primary_key
+                    if column not in primary_keys
                 )
                 conflict = f'DO UPDATE SET {updates}' if updates else "DO NOTHING"
+                conflict_columns = ",".join(f'"{column}"' for column in primary_keys)
                 query = (
                     f'INSERT INTO "{table}" ({column_sql}) VALUES ({placeholders}) '
-                    f'ON CONFLICT("{primary_key}") {conflict}'
+                    f'ON CONFLICT({conflict_columns}) {conflict}'
                 )
                 destination.executemany(query, [tuple(row[column] for column in columns) for row in rows])
                 copied += len(rows)

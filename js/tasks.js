@@ -77,6 +77,10 @@ function normalizeTaskData(taskData) {
           parentId: comment?.parentId ? String(comment.parentId) : null,
           createdAt: String(comment?.createdAt || new Date().toISOString()),
           editedAt: comment?.editedAt ? String(comment.editedAt) : null,
+          resolvedAt: comment?.resolvedAt ? String(comment.resolvedAt) : null,
+          reactions: comment?.reactions && typeof comment.reactions === "object"
+            ? Object.fromEntries(Object.entries(comment.reactions).map(([emoji, users]) => [emoji, Array.isArray(users) ? users.map(String) : []]))
+            : {},
         })).filter((comment) => comment.text).slice(-30)
       : [],
     attachments: Array.isArray(taskData.attachments)
@@ -93,6 +97,9 @@ function normalizeTaskData(taskData) {
     estimatedMinutes: Math.max(0, Math.min(100000, Number(taskData.estimatedMinutes) || 0)),
     timeSpentSeconds: Math.max(0, Number(taskData.timeSpentSeconds) || 0),
     timerStartedAt: String(taskData.timerStartedAt || ""),
+    startDate: String(taskData.startDate || ""),
+    goalId: String(taskData.goalId || ""),
+    milestone: Boolean(taskData.milestone),
   };
 }
 

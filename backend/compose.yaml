@@ -22,6 +22,10 @@ services:
       FLOWBOARD_AUTH_REQUIRED: "true"
       FLOWBOARD_AUTH_SECRET: ${FLOWBOARD_AUTH_SECRET:?Set FLOWBOARD_AUTH_SECRET}
       FLOWBOARD_CORS_ORIGINS: ${FLOWBOARD_CORS_ORIGINS:-http://localhost:4173}
+      FLOWBOARD_PUBLIC_APP_URL: ${FLOWBOARD_PUBLIC_APP_URL:-http://localhost:4173}
+      FLOWBOARD_OBJECT_STORAGE_PATH: /app/data/objects
+    volumes:
+      - flowboard-objects:/app/data/objects
     depends_on:
       postgres:
         condition: service_healthy
@@ -29,3 +33,4 @@ services:
 
 volumes:
   flowboard-postgres:
+  flowboard-objects:

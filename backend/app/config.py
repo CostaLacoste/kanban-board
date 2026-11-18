@@ -25,6 +25,8 @@ class Settings:
     smtp_username: str = ""
     smtp_password: str = ""
     smtp_from: str = "Flowboard <noreply@flowboard.local>"
+    object_storage_path: Path | None = None
+    public_app_url: str = "http://localhost:4173"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -49,5 +51,10 @@ class Settings:
             smtp_username=os.getenv("FLOWBOARD_SMTP_USERNAME", ""),
             smtp_password=os.getenv("FLOWBOARD_SMTP_PASSWORD", ""),
             smtp_from=os.getenv("FLOWBOARD_SMTP_FROM", "Flowboard <noreply@flowboard.local>"),
+            object_storage_path=(
+                Path(os.environ["FLOWBOARD_OBJECT_STORAGE_PATH"]).expanduser()
+                if os.getenv("FLOWBOARD_OBJECT_STORAGE_PATH") else None
+            ),
+            public_app_url=os.getenv("FLOWBOARD_PUBLIC_APP_URL", "http://localhost:4173").rstrip("/"),
         )
 

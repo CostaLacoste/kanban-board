@@ -205,6 +205,93 @@ class Database:
                 );
                 CREATE INDEX IF NOT EXISTS task_comments_task_idx
                     ON task_comments(task_id, created_at);
+                CREATE TABLE IF NOT EXISTS comment_metadata (
+                    comment_id TEXT PRIMARY KEY,
+                    resolved_at TEXT,
+                    FOREIGN KEY (comment_id) REFERENCES task_comments(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS comment_reactions (
+                    comment_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    emoji TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (comment_id, user_id, emoji),
+                    FOREIGN KEY (comment_id) REFERENCES task_comments(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS task_watchers (
+                    task_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (task_id, user_id),
+                    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS invitations (
+                    id TEXT PRIMARY KEY,
+                    email TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    token_hash TEXT NOT NULL UNIQUE,
+                    expires_at TEXT NOT NULL,
+                    accepted_at TEXT,
+                    created_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS auth_sessions (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    user_agent TEXT NOT NULL,
+                    ip_address TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL,
+                    revoked_at TEXT,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS auth_sessions_user_idx
+                    ON auth_sessions(user_id, revoked_at, last_seen_at);
+                CREATE TABLE IF NOT EXISTS password_resets (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    token_hash TEXT NOT NULL UNIQUE,
+                    expires_at TEXT NOT NULL,
+                    used_at TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS attachment_objects (
+                    attachment_id TEXT PRIMARY KEY,
+                    storage_key TEXT NOT NULL,
+                    checksum TEXT NOT NULL,
+                    FOREIGN KEY (attachment_id) REFERENCES attachments(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS goals (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    target_date TEXT NOT NULL,
+                    color TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS jobs (
+                    id TEXT PRIMARY KEY,
+                    kind TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT,
+                    available_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    completed_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS jobs_pending_idx
+                    ON jobs(status, available_at, created_at);
+                CREATE TABLE IF NOT EXISTS realtime_events (
+                    id TEXT PRIMARY KEY,
+                    instance_id TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS realtime_events_created_idx
+                    ON realtime_events(created_at);
                 CREATE TABLE IF NOT EXISTS schema_migrations (
                     version INTEGER PRIMARY KEY,
                     applied_at TEXT NOT NULL
@@ -218,6 +305,9 @@ class Database:
                 "INSERT INTO schema_migrations(version,applied_at) VALUES (2,?) ON CONFLICT(version) DO NOTHING", (utc_now(),)
             )
             connection.execute(
+                "INSERT INTO schema_migrations(version,applied_at) VALUES (3,?) ON CONFLICT(version) DO NOTHING", (utc_now(),)
+            )
+            connection.execute(
                 "INSERT INTO boards(id, name, created_at) VALUES (?, ?, ?) ON CONFLICT(id) DO NOTHING",
                 (DEFAULT_BOARD["id"], DEFAULT_BOARD["name"], DEFAULT_BOARD["createdAt"]),
             )
@@ -225,6 +315,16 @@ class Database:
                 "INSERT INTO settings(key, value, updated_at) VALUES ('workspaceRevision', '0', ?) ON CONFLICT(key) DO NOTHING",
                 (utc_now(),),
             )
+            if self.provider == "postgresql":
+                connection.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS tasks_payload_fts_idx ON tasks "
+                    "USING GIN (to_tsvector('simple', payload))"
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS tasks_payload_trgm_idx ON tasks "
+                    "USING GIN (payload gin_trgm_ops)"
+                )
 
     def get_setting(self, key: str, default: Any) -> Any:
         with self._lock, self.connect() as connection:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -107,7 +107,7 @@ class Repository:
         return task
 
     @staticmethod
-    def _comment_from_row(row: Any) -> dict[str, Any]:
+    def _comment_from_row(row: Any, resolved_at: str | None = None, reactions: dict[str, list[str]] | None = None) -> dict[str, Any]:
         return {
             "id": row["id"],
             "taskId": row["task_id"],
@@ -118,7 +118,35 @@ class Repository:
             "parentId": row["parent_id"],
             "createdAt": row["created_at"],
             "editedAt": row["edited_at"],
+            "resolvedAt": resolved_at,
+            "reactions": reactions or {},
         }
+
+    def _enriched_comment(self, connection: Any, row: Any) -> dict[str, Any]:
+        metadata = connection.execute(
+            "SELECT resolved_at FROM comment_metadata WHERE comment_id=?", (row["id"],)
+        ).fetchone()
+        reaction_rows = connection.execute(
+            "SELECT emoji,user_id FROM comment_reactions WHERE comment_id=? ORDER BY created_at", (row["id"],)
+        ).fetchall()
+        reactions: dict[str, list[str]] = {}
+        for reaction in reaction_rows:
+            reactions.setdefault(reaction["emoji"], []).append(reaction["user_id"])
+        return self._comment_from_row(row, metadata["resolved_at"] if metadata else None, reactions)
+
+    def _sync_embedded_comments(self, connection: Any, task_id: str) -> None:
+        task_row = connection.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+        if task_row is None:
+            return
+        rows = connection.execute(
+            "SELECT * FROM task_comments WHERE task_id=? ORDER BY created_at", (task_id,)
+        ).fetchall()
+        task = json.loads(task_row["payload"])
+        task["comments"] = [
+            {key: value for key, value in self._enriched_comment(connection, row).items() if key != "taskId"}
+            for row in rows[-30:]
+        ]
+        self._save_task(connection, task)
 
     def list_comments(self, task_id: str) -> list[dict[str, Any]] | None:
         with self.database._lock, self.database.connect() as connection:
@@ -129,7 +157,7 @@ class Repository:
                 "SELECT * FROM task_comments WHERE task_id=? ORDER BY created_at", (task_id,)
             ).fetchall()
             if rows:
-                return [self._comment_from_row(row) for row in rows]
+                return [self._enriched_comment(connection, row) for row in rows]
             legacy = json.loads(task["payload"]).get("comments") or []
             return [{**comment, "taskId": task_id} for comment in legacy]
 
@@ -147,7 +175,7 @@ class Repository:
                 return None
             existing = connection.execute("SELECT * FROM task_comments WHERE id=?", (comment_id,)).fetchone()
             if existing:
-                return self._comment_from_row(existing)
+                return self._enriched_comment(connection, existing)
             if data.parent_id:
                 parent = connection.execute(
                     "SELECT 1 FROM task_comments WHERE id=? AND task_id=?", (data.parent_id, task_id)
@@ -190,6 +218,8 @@ class Repository:
                 "parentId": data.parent_id,
                 "createdAt": created_at,
                 "editedAt": None,
+                "resolvedAt": None,
+                "reactions": {},
             }
             embedded = [
                 {key: value for key, value in item.items() if key != "taskId"}
@@ -207,7 +237,97 @@ class Repository:
                         f"{author}: {data.text[:180]}", created_at,
                     ),
                 )
+            watchers = connection.execute(
+                "SELECT user_id FROM task_watchers WHERE task_id=? AND user_id<>?", (task_id, user_id or "")
+            ).fetchall()
+            mentioned = set(mention_ids)
+            for watcher in watchers:
+                if watcher["user_id"] in mentioned:
+                    continue
+                connection.execute(
+                    "INSERT INTO notifications(id,user_id,kind,title,body,created_at) VALUES (?,?,?,?,?,?)",
+                    (str(uuid4()), watcher["user_id"], "comment", "New task comment", f"{author}: {data.text[:180]}", created_at),
+                )
             return comment
+
+    def update_comment(
+        self, comment_id: str, user_id: str, text: str | None, resolved: bool | None, can_moderate: bool
+    ) -> dict[str, Any] | None:
+        with self.database._lock, self.database.connect() as connection:
+            row = connection.execute("SELECT * FROM task_comments WHERE id=?", (comment_id,)).fetchone()
+            if row is None or (row["user_id"] != user_id and not can_moderate):
+                return None
+            if text is not None:
+                connection.execute(
+                    "UPDATE task_comments SET body=?,edited_at=? WHERE id=?", (text, utc_now(), comment_id)
+                )
+            if resolved is not None:
+                value = utc_now() if resolved else None
+                connection.execute(
+                    "INSERT INTO comment_metadata(comment_id,resolved_at) VALUES (?,?) "
+                    "ON CONFLICT(comment_id) DO UPDATE SET resolved_at=excluded.resolved_at",
+                    (comment_id, value),
+                )
+            saved = connection.execute("SELECT * FROM task_comments WHERE id=?", (comment_id,)).fetchone()
+            comment = self._enriched_comment(connection, saved)
+            self._sync_embedded_comments(connection, row["task_id"])
+            return comment
+
+    def delete_comment(self, comment_id: str, user_id: str, can_moderate: bool) -> bool:
+        with self.database._lock, self.database.connect() as connection:
+            row = connection.execute("SELECT user_id,task_id FROM task_comments WHERE id=?", (comment_id,)).fetchone()
+            if row is None or (row["user_id"] != user_id and not can_moderate):
+                return False
+            deleted = connection.execute("DELETE FROM task_comments WHERE id=?", (comment_id,)).rowcount > 0
+            if deleted:
+                self._sync_embedded_comments(connection, row["task_id"])
+            return deleted
+
+    def toggle_reaction(self, comment_id: str, user_id: str, emoji: str) -> dict[str, Any] | None:
+        with self.database._lock, self.database.connect() as connection:
+            row = connection.execute("SELECT * FROM task_comments WHERE id=?", (comment_id,)).fetchone()
+            if row is None:
+                return None
+            existing = connection.execute(
+                "SELECT 1 FROM comment_reactions WHERE comment_id=? AND user_id=? AND emoji=?",
+                (comment_id, user_id, emoji),
+            ).fetchone()
+            if existing:
+                connection.execute(
+                    "DELETE FROM comment_reactions WHERE comment_id=? AND user_id=? AND emoji=?",
+                    (comment_id, user_id, emoji),
+                )
+            else:
+                connection.execute(
+                    "INSERT INTO comment_reactions(comment_id,user_id,emoji,created_at) VALUES (?,?,?,?)",
+                    (comment_id, user_id, emoji, utc_now()),
+                )
+            comment = self._enriched_comment(connection, row)
+            self._sync_embedded_comments(connection, row["task_id"])
+            return comment
+
+    def set_watching(self, task_id: str, user_id: str, watching: bool) -> bool | None:
+        with self.database._lock, self.database.connect() as connection:
+            if connection.execute("SELECT 1 FROM tasks WHERE id=?", (task_id,)).fetchone() is None:
+                return None
+            if watching:
+                connection.execute(
+                    "INSERT INTO task_watchers(task_id,user_id,created_at) VALUES (?,?,?) ON CONFLICT(task_id,user_id) DO NOTHING",
+                    (task_id, user_id, utc_now()),
+                )
+            else:
+                connection.execute("DELETE FROM task_watchers WHERE task_id=? AND user_id=?", (task_id, user_id))
+        return watching
+
+    def list_watchers(self, task_id: str) -> list[dict[str, Any]] | None:
+        with self.database._lock, self.database.connect() as connection:
+            if connection.execute("SELECT 1 FROM tasks WHERE id=?", (task_id,)).fetchone() is None:
+                return None
+            rows = connection.execute(
+                "SELECT u.id,u.name,u.email FROM task_watchers w JOIN users u ON u.id=w.user_id WHERE w.task_id=?",
+                (task_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def _restore_embedded_comments(self, connection: Any, task: dict[str, Any]) -> None:
         for comment in task.get("comments") or []:
@@ -403,6 +523,21 @@ class Repository:
             "createdAt": created_at,
         }
 
+    def bind_attachment_object(self, attachment_id: str, storage_key: str, checksum: str) -> None:
+        with self.database._lock, self.database.connect() as connection:
+            connection.execute(
+                "INSERT INTO attachment_objects(attachment_id,storage_key,checksum) VALUES (?,?,?) "
+                "ON CONFLICT(attachment_id) DO UPDATE SET storage_key=excluded.storage_key,checksum=excluded.checksum",
+                (attachment_id, storage_key, checksum),
+            )
+
+    def get_attachment_object(self, attachment_id: str) -> dict[str, str] | None:
+        with self.database._lock, self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT storage_key,checksum FROM attachment_objects WHERE attachment_id=?", (attachment_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
     def attachment_count(self, task_id: str) -> int:
         with self.database._lock, self.database.connect() as connection:
             row = connection.execute(
@@ -554,16 +689,36 @@ class Repository:
         priority: str | None = None,
         assignee: str | None = None,
         tag: str | None = None,
+        board_id: str | None = None,
+        deadline_from: str | None = None,
+        deadline_to: str | None = None,
+        archived: bool | None = None,
+        limit: int = 100,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         needle = query.strip().lower()
+        candidate_ids: set[str] | None = None
+        if needle and self.database.provider == "postgresql":
+            with self.database._lock, self.database.connect() as connection:
+                rows = connection.execute(
+                    "SELECT id FROM tasks WHERE "
+                    "to_tsvector('simple', payload) @@ websearch_to_tsquery('simple', ?) "
+                    "OR similarity(payload, ?) > 0.12 "
+                    "ORDER BY GREATEST(ts_rank(to_tsvector('simple', payload), websearch_to_tsquery('simple', ?)), similarity(payload, ?)) DESC "
+                    "LIMIT ?",
+                    (needle, needle, needle, needle, min(1000, limit + offset + 200)),
+                ).fetchall()
+            candidate_ids = {row["id"] for row in rows}
         results = []
-        for task in self.list_tasks():
+        for task in self.list_tasks(board_id, archived):
+            if candidate_ids is not None and task["id"] not in candidate_ids:
+                continue
             haystack = " ".join([
                 task.get("title", ""), task.get("description", ""),
                 " ".join(task.get("tags") or []),
                 " ".join(item.get("text", "") for item in task.get("checklist") or []),
             ]).lower()
-            if needle and needle not in haystack:
+            if needle and candidate_ids is None and needle not in haystack:
                 continue
             if status and task.get("status") != status:
                 continue
@@ -573,8 +728,12 @@ class Repository:
                 continue
             if tag and tag.lower() not in (task.get("tags") or []):
                 continue
+            if deadline_from and (not task.get("deadline") or task["deadline"] < deadline_from):
+                continue
+            if deadline_to and (not task.get("deadline") or task["deadline"] > deadline_to):
+                continue
             results.append(task)
-        return results
+        return results[offset:offset + limit]
 
     def create_saved_filter(self, user_id: str, name: str, query: dict[str, Any]) -> dict[str, Any]:
         item = {"id": str(uuid4()), "name": name, "query": query, "createdAt": utc_now()}
@@ -619,6 +778,21 @@ class Repository:
                 "UPDATE notifications SET read_at=? WHERE id=? AND (user_id IS NULL OR user_id=?)",
                 (utc_now(), notification_id, user_id),
             ).rowcount > 0
+
+    def read_all_notifications(self, user_id: str | None) -> int:
+        with self.database._lock, self.database.connect() as connection:
+            return connection.execute(
+                "UPDATE notifications SET read_at=? WHERE read_at IS NULL AND (user_id IS NULL OR user_id=?)",
+                (utc_now(), user_id),
+            ).rowcount
+
+    def notification_summary(self, user_id: str | None) -> dict[str, Any]:
+        items = self.list_notifications(user_id)
+        unread = [item for item in items if not item["readAt"]]
+        kinds: dict[str, int] = {}
+        for item in unread:
+            kinds[item["kind"]] = kinds.get(item["kind"], 0) + 1
+        return {"unread": len(unread), "byKind": kinds}
 
     def get_notification_preferences(self, user_id: str) -> dict[str, Any]:
         return self.database.get_setting(
@@ -677,4 +851,109 @@ class Repository:
                 connection.execute("UPDATE outbox SET attempts=attempts+1,last_error=? WHERE id=?", (error[:500], item_id))
             else:
                 connection.execute("UPDATE outbox SET attempts=attempts+1,delivered_at=? WHERE id=?", (utc_now(), item_id))
+
+    def create_goal(self, title: str, description: str, target_date: str, color: str) -> dict[str, Any]:
+        item = {
+            "id": str(uuid4()), "title": title, "description": description,
+            "targetDate": target_date, "color": color, "createdAt": utc_now(),
+        }
+        with self.database._lock, self.database.connect() as connection:
+            connection.execute(
+                "INSERT INTO goals(id,title,description,target_date,color,created_at) VALUES (?,?,?,?,?,?)",
+                (item["id"], title, description, target_date, color, item["createdAt"]),
+            )
+        return {**item, "progress": 0, "taskCount": 0, "completedCount": 0}
+
+    def list_goals(self) -> list[dict[str, Any]]:
+        tasks = self.list_tasks()
+        with self.database._lock, self.database.connect() as connection:
+            rows = connection.execute("SELECT * FROM goals ORDER BY target_date,created_at").fetchall()
+        result = []
+        for row in rows:
+            linked = [task for task in tasks if task.get("goalId") == row["id"]]
+            completed = sum(task.get("status") == "done" for task in linked)
+            result.append({
+                "id": row["id"], "title": row["title"], "description": row["description"],
+                "targetDate": row["target_date"], "color": row["color"], "createdAt": row["created_at"],
+                "progress": round(completed / len(linked) * 100) if linked else 0,
+                "taskCount": len(linked), "completedCount": completed,
+            })
+        return result
+
+    def delete_goal(self, goal_id: str) -> bool:
+        with self.database._lock, self.database.connect() as connection:
+            tasks = connection.execute("SELECT id,payload FROM tasks").fetchall()
+            for row in tasks:
+                task = json.loads(row["payload"])
+                if task.get("goalId") == goal_id:
+                    task["goalId"] = ""
+                    self._save_task(connection, task)
+            return connection.execute("DELETE FROM goals WHERE id=?", (goal_id,)).rowcount > 0
+
+    def enqueue_job(self, kind: str, payload: dict[str, Any]) -> dict[str, Any]:
+        item = {"id": str(uuid4()), "kind": kind, "status": "pending", "attempts": 0, "lastError": None, "createdAt": utc_now()}
+        with self.database._lock, self.database.connect() as connection:
+            connection.execute(
+                "INSERT INTO jobs(id,kind,payload,status,available_at,created_at) VALUES (?,?,?,?,?,?)",
+                (item["id"], kind, json.dumps(payload, ensure_ascii=False), "pending", item["createdAt"], item["createdAt"]),
+            )
+        return item
+
+    def list_jobs(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self.database._lock, self.database.connect() as connection:
+            rows = connection.execute("SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [{
+            "id": row["id"], "kind": row["kind"], "status": row["status"], "attempts": row["attempts"],
+            "lastError": row["last_error"], "createdAt": row["created_at"],
+        } for row in rows]
+
+    def job_counts(self) -> dict[str, int]:
+        with self.database._lock, self.database.connect() as connection:
+            rows = connection.execute("SELECT status,COUNT(*) AS count FROM jobs GROUP BY status").fetchall()
+        return {row["status"]: int(row["count"]) for row in rows}
+
+    def claim_jobs(self, limit: int = 10) -> list[dict[str, Any]]:
+        claimed: list[dict[str, Any]] = []
+        with self.database._lock, self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM jobs WHERE status='pending' AND available_at<=? ORDER BY created_at LIMIT ?",
+                (utc_now(), limit),
+            ).fetchall()
+            for row in rows:
+                updated = connection.execute(
+                    "UPDATE jobs SET status='running',attempts=attempts+1 WHERE id=? AND status='pending'", (row["id"],)
+                )
+                if updated.rowcount:
+                    claimed.append({**dict(row), "payload": json.loads(row["payload"]), "attempts": row["attempts"] + 1})
+        return claimed
+
+    def finish_job(self, job_id: str, error: str | None = None) -> None:
+        with self.database._lock, self.database.connect() as connection:
+            if error:
+                row = connection.execute("SELECT attempts FROM jobs WHERE id=?", (job_id,)).fetchone()
+                attempts = int(row["attempts"]) if row else 5
+                retry_at = (datetime.now(timezone.utc) + timedelta(seconds=min(300, 2 ** attempts))).isoformat().replace("+00:00", "Z")
+                connection.execute(
+                    "UPDATE jobs SET status=?,last_error=?,available_at=? WHERE id=?",
+                    ("pending" if attempts < 5 else "failed", error[:500], retry_at, job_id),
+                )
+            else:
+                connection.execute(
+                    "UPDATE jobs SET status='done',completed_at=? WHERE id=?", (utc_now(), job_id)
+                )
+
+    def publish_realtime_event(self, instance_id: str, payload: dict[str, Any]) -> None:
+        with self.database._lock, self.database.connect() as connection:
+            connection.execute(
+                "INSERT INTO realtime_events(id,instance_id,payload,created_at) VALUES (?,?,?,?)",
+                (str(uuid4()), instance_id, json.dumps(payload, ensure_ascii=False), utc_now()),
+            )
+
+    def realtime_events_after(self, cursor: str, instance_id: str, limit: int = 100) -> list[dict[str, Any]]:
+        with self.database._lock, self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT instance_id,payload,created_at FROM realtime_events WHERE created_at>? AND instance_id<>? "
+                "ORDER BY created_at LIMIT ?", (cursor, instance_id, limit),
+            ).fetchall()
+        return [{"instanceId": row["instance_id"], "payload": json.loads(row["payload"]), "createdAt": row["created_at"]} for row in rows]
 

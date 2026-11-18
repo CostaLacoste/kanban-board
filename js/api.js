@@ -104,6 +104,78 @@ export function updateAccountMember(email, role) {
   });
 }
 
+export function createInvitation(email, role = "editor") {
+  return apiRequest("/invitations", { method: "POST", body: JSON.stringify({ email, role }) });
+}
+
+export function getInvitations() {
+  return apiRequest("/invitations");
+}
+
+export function getSessions() {
+  return apiRequest("/auth/sessions");
+}
+
+export function revokeSession(sessionId) {
+  return apiRequest(`/auth/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+}
+
+export function requestPasswordReset(email) {
+  return apiRequest("/auth/password-reset/request", {
+    method: "POST", body: JSON.stringify({ email }),
+  });
+}
+
+export function getNotifications() {
+  return apiRequest("/notifications");
+}
+
+export function getNotificationSummary() {
+  return apiRequest("/notifications/summary");
+}
+
+export function markNotificationRead(notificationId) {
+  return apiRequest(`/notifications/${encodeURIComponent(notificationId)}/read`, { method: "POST" });
+}
+
+export function markAllNotificationsRead() {
+  return apiRequest("/notifications/read-all", { method: "POST" });
+}
+
+export function updateComment(commentId, changes) {
+  return apiRequest(`/comments/${encodeURIComponent(commentId)}`, {
+    method: "PATCH", body: JSON.stringify(changes),
+  });
+}
+
+export function reactToComment(commentId, emoji) {
+  return apiRequest(`/comments/${encodeURIComponent(commentId)}/reactions`, {
+    method: "POST", body: JSON.stringify({ emoji }),
+  });
+}
+
+export function setTaskWatching(taskId, watching) {
+  return apiRequest(`/tasks/${encodeURIComponent(taskId)}/watchers/me`, {
+    method: "PUT", body: JSON.stringify({ watching }),
+  });
+}
+
+export function getGoals() {
+  return apiRequest("/goals");
+}
+
+export function createGoal(payload) {
+  return apiRequest("/goals", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function getPlanningTimeline() {
+  return apiRequest("/planning/timeline");
+}
+
+export function getPlanningWorkload() {
+  return apiRequest("/planning/workload");
+}
+
 export function logoutAccount() {
   storageRemove(API_TOKEN_KEY);
   storageRemove(REVISION_KEY);
@@ -235,17 +307,35 @@ export function connectRealtime(onUpdate, onEvent = () => {}) {
   socket?.close();
   const params = new URLSearchParams({ clientId });
   if (token) params.set("token", token);
-  socket = new WebSocket(`${url}?${params}`);
-  socket.addEventListener("message", (event) => {
-    try {
-      const message = JSON.parse(event.data);
-      if (message.type === "workspace.updated" && message.revision > getRemoteRevision()) {
-        onUpdate(message);
-      }
-      onEvent(message);
-    } catch { /* ignore malformed realtime events */ }
-  });
-  return () => socket?.close();
+  let stopped = false;
+  let reconnectTimer = null;
+  let attempts = 0;
+  const open = () => {
+    if (stopped) return;
+    socket = new WebSocket(`${url}?${params}`);
+    socket.addEventListener("open", () => { attempts = 0; });
+    socket.addEventListener("message", (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        if (message.type === "workspace.updated" && message.revision > getRemoteRevision()) {
+          onUpdate(message);
+        }
+        onEvent(message);
+      } catch { /* ignore malformed realtime events */ }
+    });
+    socket.addEventListener("close", () => {
+      if (stopped) return;
+      attempts += 1;
+      const delay = Math.min(30000, 500 * (2 ** Math.min(attempts, 6)));
+      reconnectTimer = setTimeout(open, delay);
+    });
+  };
+  open();
+  return () => {
+    stopped = true;
+    clearTimeout(reconnectTimer);
+    socket?.close();
+  };
 }
 
 export function sendRealtime(message) {

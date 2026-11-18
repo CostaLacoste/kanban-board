@@ -162,6 +162,69 @@ Object.entries(collaborationTranslations).forEach(([language, translations]) => 
   Object.assign(dictionaries[language], translations);
 });
 
+const productionTranslations = {
+  ru: {
+    "notifications.open": "◉ Уведомления", "notifications.title": "Центр уведомлений", "notifications.all": "Все", "notifications.mentions": "Упоминания", "notifications.comments": "Комментарии", "notifications.sync": "Синхронизация", "notifications.readAll": "Прочитать все", "notifications.empty": "Новых уведомлений нет.", "notifications.read": "Прочитано",
+    "planning.startDate": "Дата начала", "planning.goal": "Цель", "planning.noGoal": "Без цели", "planning.milestone": "Контрольная точка", "planning.label": "Планирование", "planning.goals": "Цели и дорожная карта", "planning.goalPlaceholder": "Название цели", "planning.addGoal": "+ Цель", "planning.noDate": "Без срока",
+    "account.resetPassword": "Восстановить пароль", "account.resetSent": "Инструкции отправлены", "account.invite": "Пригласить участника", "account.inviteSend": "Отправить", "account.inviteAccepted": "Принято", "account.invitePending": "Ожидает", "account.inviteCreated": "Приглашение создано", "account.sessions": "Активные сессии", "account.currentSession": "Текущая сессия", "account.revokeSession": "Завершить",
+    "comment.reply": "Ответить", "comment.replyPlaceholder": "Напишите ответ...", "comment.resolve": "Закрыть", "comment.reopen": "Открыть", "comment.watch": "Следить за задачей", "comment.unwatch": "Не следить",
+  },
+  en: {
+    "notifications.open": "◉ Notifications", "notifications.title": "Notification center", "notifications.all": "All", "notifications.mentions": "Mentions", "notifications.comments": "Comments", "notifications.sync": "Sync", "notifications.readAll": "Mark all read", "notifications.empty": "No new notifications.", "notifications.read": "Mark read",
+    "planning.startDate": "Start date", "planning.goal": "Goal", "planning.noGoal": "No goal", "planning.milestone": "Milestone", "planning.label": "Planning", "planning.goals": "Goals and roadmap", "planning.goalPlaceholder": "Goal title", "planning.addGoal": "+ Goal", "planning.noDate": "No due date",
+    "account.resetPassword": "Reset password", "account.resetSent": "Instructions sent", "account.invite": "Invite member", "account.inviteSend": "Send", "account.inviteAccepted": "Accepted", "account.invitePending": "Pending", "account.inviteCreated": "Invitation created", "account.sessions": "Active sessions", "account.currentSession": "Current session", "account.revokeSession": "Revoke",
+    "comment.reply": "Reply", "comment.replyPlaceholder": "Write a reply...", "comment.resolve": "Resolve", "comment.reopen": "Reopen", "comment.watch": "Watch task", "comment.unwatch": "Unwatch",
+  },
+  ig: {
+    "notifications.open": "◉ Ọkwa", "notifications.title": "Ebe ọkwa", "notifications.all": "Niile", "notifications.mentions": "Ntụaka", "notifications.comments": "Okwu", "notifications.sync": "Mmekọrịta", "notifications.readAll": "Gụọ ha niile", "notifications.empty": "Enweghị ọkwa ọhụrụ.", "notifications.read": "Gụọ",
+    "planning.startDate": "Ụbọchị mmalite", "planning.goal": "Ebumnuche", "planning.noGoal": "Enweghị ebumnuche", "planning.milestone": "Nzọụkwụ dị mkpa", "planning.label": "Atụmatụ", "planning.goals": "Ebumnuche na ụzọ ọrụ", "planning.goalPlaceholder": "Aha ebumnuche", "planning.addGoal": "+ Ebumnuche", "planning.noDate": "Enweghị ụbọchị",
+    "account.resetPassword": "Tọgharịa okwuntughe", "account.resetSent": "E zigara ntuziaka", "account.invite": "Kpọọ onye otu", "account.inviteSend": "Zipu", "account.inviteAccepted": "Anabatara", "account.invitePending": "Na-echere", "account.inviteCreated": "E mepụtara ọkpụkpọ", "account.sessions": "Oge nbanye nọ ọrụ", "account.currentSession": "Oge a", "account.revokeSession": "Kwụsị",
+    "comment.reply": "Zaghachi", "comment.replyPlaceholder": "Dee azịza...", "comment.resolve": "Mechie", "comment.reopen": "Mepee", "comment.watch": "Soro ọrụ", "comment.unwatch": "Kwụsị iso",
+  },
+  uz: {
+    "notifications.open": "◉ Bildirishnomalar", "notifications.title": "Bildirishnomalar markazi", "notifications.all": "Barchasi", "notifications.mentions": "Eslatmalar", "notifications.comments": "Izohlar", "notifications.sync": "Sinxronlash", "notifications.readAll": "Barchasini o‘qish", "notifications.empty": "Yangi bildirishnoma yo‘q.", "notifications.read": "O‘qildi",
+    "planning.startDate": "Boshlanish sanasi", "planning.goal": "Maqsad", "planning.noGoal": "Maqsadsiz", "planning.milestone": "Muhim bosqich", "planning.label": "Rejalashtirish", "planning.goals": "Maqsadlar va yo‘l xaritasi", "planning.goalPlaceholder": "Maqsad nomi", "planning.addGoal": "+ Maqsad", "planning.noDate": "Muddat yo‘q",
+    "account.resetPassword": "Parolni tiklash", "account.resetSent": "Ko‘rsatmalar yuborildi", "account.invite": "A’zoni taklif qilish", "account.inviteSend": "Yuborish", "account.inviteAccepted": "Qabul qilindi", "account.invitePending": "Kutilmoqda", "account.inviteCreated": "Taklif yaratildi", "account.sessions": "Faol seanslar", "account.currentSession": "Joriy seans", "account.revokeSession": "Tugatish",
+    "comment.reply": "Javob berish", "comment.replyPlaceholder": "Javob yozing...", "comment.resolve": "Yopish", "comment.reopen": "Qayta ochish", "comment.watch": "Vazifani kuzatish", "comment.unwatch": "Kuzatmaslik",
+  },
+  uk: {
+    "notifications.open": "◉ Сповіщення", "notifications.title": "Центр сповіщень", "notifications.all": "Усі", "notifications.mentions": "Згадки", "notifications.comments": "Коментарі", "notifications.sync": "Синхронізація", "notifications.readAll": "Прочитати всі", "notifications.empty": "Нових сповіщень немає.", "notifications.read": "Прочитано",
+    "planning.startDate": "Дата початку", "planning.goal": "Ціль", "planning.noGoal": "Без цілі", "planning.milestone": "Контрольна точка", "planning.label": "Планування", "planning.goals": "Цілі та дорожня карта", "planning.goalPlaceholder": "Назва цілі", "planning.addGoal": "+ Ціль", "planning.noDate": "Без терміну",
+    "account.resetPassword": "Відновити пароль", "account.resetSent": "Інструкції надіслано", "account.invite": "Запросити учасника", "account.inviteSend": "Надіслати", "account.inviteAccepted": "Прийнято", "account.invitePending": "Очікує", "account.inviteCreated": "Запрошення створено", "account.sessions": "Активні сесії", "account.currentSession": "Поточна сесія", "account.revokeSession": "Завершити",
+    "comment.reply": "Відповісти", "comment.replyPlaceholder": "Напишіть відповідь...", "comment.resolve": "Закрити", "comment.reopen": "Відкрити", "comment.watch": "Стежити за завданням", "comment.unwatch": "Не стежити",
+  },
+  he: {
+    "notifications.open": "◉ התראות", "notifications.title": "מרכז התראות", "notifications.all": "הכול", "notifications.mentions": "אזכורים", "notifications.comments": "תגובות", "notifications.sync": "סנכרון", "notifications.readAll": "סימון הכול כנקרא", "notifications.empty": "אין התראות חדשות.", "notifications.read": "סימון כנקרא",
+    "planning.startDate": "תאריך התחלה", "planning.goal": "יעד", "planning.noGoal": "ללא יעד", "planning.milestone": "אבן דרך", "planning.label": "תכנון", "planning.goals": "יעדים ומפת דרכים", "planning.goalPlaceholder": "שם היעד", "planning.addGoal": "+ יעד", "planning.noDate": "ללא תאריך",
+    "account.resetPassword": "איפוס סיסמה", "account.resetSent": "ההוראות נשלחו", "account.invite": "הזמנת חבר", "account.inviteSend": "שליחה", "account.inviteAccepted": "התקבלה", "account.invitePending": "ממתינה", "account.inviteCreated": "ההזמנה נוצרה", "account.sessions": "הפעלות פעילות", "account.currentSession": "הפעלה נוכחית", "account.revokeSession": "סיום",
+    "comment.reply": "תגובה", "comment.replyPlaceholder": "כתיבת תגובה...", "comment.resolve": "סגירה", "comment.reopen": "פתיחה מחדש", "comment.watch": "מעקב אחר המשימה", "comment.unwatch": "הפסקת מעקב",
+  },
+  yi: {
+    "notifications.open": "◉ מעלדונגען", "notifications.title": "מעלדונג־צענטער", "notifications.all": "אַלע", "notifications.mentions": "דערמאָנונגען", "notifications.comments": "באַמערקונגען", "notifications.sync": "סינכראָניזאַציע", "notifications.readAll": "לייענען אַלע", "notifications.empty": "נישטאָ נײַע מעלדונגען.", "notifications.read": "געלייענט",
+    "planning.startDate": "אָנהייב־דאַטע", "planning.goal": "ציל", "planning.noGoal": "אָן ציל", "planning.milestone": "וויכטיקער פּונקט", "planning.label": "פּלאַנירונג", "planning.goals": "צילן און וועג־מאַפּע", "planning.goalPlaceholder": "נאָמען פֿונעם ציל", "planning.addGoal": "+ ציל", "planning.noDate": "אָן טערמין",
+    "account.resetPassword": "צוריקשטעלן פּאַראָל", "account.resetSent": "אינסטרוקציעס געשיקט", "account.invite": "אײַנלאַדן מיטגליד", "account.inviteSend": "שיקן", "account.inviteAccepted": "אָנגענומען", "account.invitePending": "וואַרט", "account.inviteCreated": "אײַנלאַדונג געשאַפֿן", "account.sessions": "אַקטיווע סעסיעס", "account.currentSession": "איצטיקע סעסיע", "account.revokeSession": "ענדיקן",
+    "comment.reply": "ענטפֿערן", "comment.replyPlaceholder": "שרײַבט אַן ענטפֿער...", "comment.resolve": "שליסן", "comment.reopen": "ווידער עפֿענען", "comment.watch": "נאָכפֿאָלגן אויפֿגאַבע", "comment.unwatch": "נישט נאָכפֿאָלגן",
+  },
+};
+
+Object.entries(productionTranslations).forEach(([language, translations]) => {
+  Object.assign(dictionaries[language], translations);
+});
+
+const advancedSearchTranslations = {
+  ru: { "filter.assignee": "Исполнитель", "filter.allAssignees": "Все исполнители", "filter.deadlineFrom": "Срок от", "filter.deadlineTo": "Срок до" },
+  en: { "filter.assignee": "Assignee", "filter.allAssignees": "All assignees", "filter.deadlineFrom": "Due from", "filter.deadlineTo": "Due to" },
+  ig: { "filter.assignee": "Onye ọrụ", "filter.allAssignees": "Ndị ọrụ niile", "filter.deadlineFrom": "Oge site", "filter.deadlineTo": "Oge ruo" },
+  uz: { "filter.assignee": "Ijrochi", "filter.allAssignees": "Barcha ijrochilar", "filter.deadlineFrom": "Muddat boshi", "filter.deadlineTo": "Muddat oxiri" },
+  uk: { "filter.assignee": "Виконавець", "filter.allAssignees": "Усі виконавці", "filter.deadlineFrom": "Термін від", "filter.deadlineTo": "Термін до" },
+  he: { "filter.assignee": "אחראי", "filter.allAssignees": "כל האחראים", "filter.deadlineFrom": "מועד מ־", "filter.deadlineTo": "מועד עד" },
+  yi: { "filter.assignee": "אויספֿירער", "filter.allAssignees": "אַלע אויספֿירער", "filter.deadlineFrom": "טערמין פֿון", "filter.deadlineTo": "טערמין ביז" },
+};
+
+Object.entries(advancedSearchTranslations).forEach(([language, translations]) => {
+  Object.assign(dictionaries[language], translations);
+});
+
 const locales = {
   ru: "ru-RU", en: "en-US", ig: "ig-NG", uz: "uz-UZ", uk: "uk-UA", he: "he-IL", yi: "yi",
 };

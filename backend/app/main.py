@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from collections import Counter
 from contextlib import asynccontextmanager
@@ -17,7 +18,7 @@ from fastapi.responses import PlainTextResponse, StreamingResponse
 from .config import Settings
 from .database import Database
 from .auth import Actor, AuthService
-from .integrations import deliver_outbox, send_email
+from .integrations import deliver_outbox, process_jobs, send_email
 from .middleware import ApiMiddleware
 from .models import (
     AttachmentOut,
@@ -28,19 +29,30 @@ from .models import (
     BoardOut,
     BoardUpdate,
     CommentCreate,
+    CommentReaction,
     CommentOut,
+    CommentUpdate,
+    GoalCreate,
+    GoalOut,
     HealthOut,
     ApiTokenCreate,
     ApiTokenOut,
     AuthToken,
     LoginRequest,
+    InvitationAccept,
+    InvitationCreate,
+    InvitationOut,
+    JobOut,
     MemberUpdate,
     NotificationOut,
     NotificationPreferences,
+    PasswordResetConfirm,
+    PasswordResetRequest,
     RegisterRequest,
     RevisionOut,
     SavedFilterCreate,
     SavedFilterOut,
+    SessionOut,
     TaskCreate,
     TaskOut,
     TaskUpdate,
@@ -49,9 +61,11 @@ from .models import (
     UserOut,
     WebhookCreate,
     WebhookOut,
+    WatcherUpdate,
 )
 from .repository import Repository
 from .realtime import RealtimeManager
+from .storage import LocalObjectStorage
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -59,12 +73,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     database = Database(config.database_path, config.database_url)
     repository = Repository(database)
     auth = AuthService(database, config)
-    realtime = RealtimeManager()
+    realtime = RealtimeManager(repository)
+    object_storage = LocalObjectStorage(config.object_storage_path)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         database.initialize()
-        yield
+        async def job_loop() -> None:
+            while True:
+                await process_jobs(repository, config)
+                await asyncio.sleep(2)
+
+        bus_task = asyncio.create_task(realtime.run_bus())
+        worker_task = asyncio.create_task(job_loop())
+        try:
+            yield
+        finally:
+            realtime.stop()
+            bus_task.cancel()
+            worker_task.cancel()
+            try:
+                await asyncio.gather(bus_task, worker_task)
+            except asyncio.CancelledError:
+                pass
 
     app = FastAPI(
         title="Flowboard API",
@@ -76,6 +107,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.repository = repository
     app.state.auth = auth
     app.state.realtime = realtime
+    app.state.object_storage = object_storage
     app.state.metrics = {"requests": 0, "duration": 0.0, "statuses": Counter()}
     app.add_middleware(
         CORSMiddleware,
@@ -100,9 +132,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=403, detail="Owner role required")
         return actor
 
+    def request_identity(request: Request) -> tuple[str, str]:
+        forwarded = request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
+        ip_address = forwarded or (request.client.host if request.client else "unknown")
+        return request.headers.get("user-agent", "unknown"), ip_address
+
     @router.get("/health", response_model=HealthOut, tags=["system"])
     def health() -> dict[str, str]:
         return {"status": "ok", "service": "flowboard-api", "version": "1.0.0"}
+
+    @router.get("/ready", tags=["system"])
+    def ready() -> dict[str, str]:
+        with database.connect() as connection:
+            connection.execute("SELECT 1").fetchone()
+        return {"status": "ready", "database": database.provider}
 
     @router.get("/metrics", response_class=PlainTextResponse, tags=["system"])
     def metrics(request: Request) -> str:
@@ -115,28 +158,98 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ]
         for code, count in sorted(values["statuses"].items()):
             lines.append(f'flowboard_http_responses_total{{status="{code}"}} {count}')
+        lines.extend([
+            "# TYPE flowboard_realtime_connections gauge",
+            f"flowboard_realtime_connections {len(realtime.sessions)}",
+            "# TYPE flowboard_jobs gauge",
+        ])
+        for job_status, count in sorted(repository.job_counts().items()):
+            lines.append(f'flowboard_jobs{{status="{job_status}"}} {count}')
         return "\n".join(lines) + "\n"
 
     @router.post("/auth/register", response_model=AuthToken, status_code=201, tags=["auth"])
-    def register(data: RegisterRequest) -> dict:
-        result = auth.register(data)
+    def register(data: RegisterRequest, request: Request) -> dict:
+        result = auth.register(data, *request_identity(request))
         if result is None:
             raise HTTPException(status_code=409, detail="Email already registered")
         user, token = result
         return {"accessToken": token, "tokenType": "bearer", "user": user}
 
     @router.post("/auth/login", response_model=AuthToken, tags=["auth"])
-    def login(data: LoginRequest) -> dict:
-        result = auth.login(data)
+    def login(data: LoginRequest, request: Request) -> dict:
+        result = auth.login(data, *request_identity(request))
         if result is None:
             raise HTTPException(status_code=401, detail="Invalid credentials")
         user, token = result
         return {"accessToken": token, "tokenType": "bearer", "user": user}
 
+    @router.post("/auth/invitations/accept", response_model=AuthToken, tags=["auth"])
+    def accept_invitation(data: InvitationAccept, request: Request) -> dict:
+        result = auth.accept_invitation(data, *request_identity(request))
+        if result is None:
+            raise HTTPException(status_code=400, detail="Invitation is invalid or expired")
+        user, token = result
+        return {"accessToken": token, "tokenType": "bearer", "user": user}
+
+    @router.post("/auth/password-reset/request", tags=["auth"])
+    async def request_password_reset(
+        data: PasswordResetRequest, background_tasks: BackgroundTasks
+    ) -> dict[str, object]:
+        result = auth.create_password_reset(data.email)
+        token = None
+        if result:
+            recipient, raw = result
+            link = f"{config.public_app_url}/?resetToken={quote(raw)}"
+            if config.smtp_host:
+                background_tasks.add_task(
+                    send_email, config, recipient, "Flowboard password reset", f"Reset your password: {link}"
+                )
+            else:
+                token = raw
+        return {"accepted": True, "resetToken": token}
+
+    @router.post("/auth/password-reset/confirm", tags=["auth"])
+    def confirm_password_reset(data: PasswordResetConfirm) -> dict[str, bool]:
+        if not auth.reset_password(data.token, data.password):
+            raise HTTPException(status_code=400, detail="Reset token is invalid or expired")
+        return {"reset": True}
+
     @router.get("/auth/me", response_model=UserOut, tags=["auth"])
     def me(request: Request) -> dict:
         actor = authenticated_actor(request)
         return auth.get_user(actor.id)
+
+    @router.get("/auth/sessions", response_model=list[SessionOut], tags=["auth"])
+    def sessions(request: Request) -> list[dict]:
+        actor = authenticated_actor(request)
+        bearer = request.headers.get("authorization", "")
+        token = bearer[7:] if bearer.lower().startswith("bearer ") else None
+        return auth.list_sessions(actor.id, auth.token_session_id(token))
+
+    @router.delete("/auth/sessions/{session_id}", status_code=204, tags=["auth"])
+    def revoke_session(session_id: str, request: Request) -> Response:
+        actor = authenticated_actor(request)
+        if not auth.revoke_session(actor.id, session_id):
+            raise HTTPException(status_code=404, detail="Session not found")
+        return Response(status_code=204)
+
+    @router.post("/invitations", response_model=InvitationOut, status_code=201, tags=["collaboration"])
+    def create_invitation(
+        data: InvitationCreate, request: Request, background_tasks: BackgroundTasks
+    ) -> dict:
+        actor = owner_actor(request)
+        invitation = auth.create_invitation(data.email, data.role, actor.id)
+        if config.smtp_host:
+            link = f"{config.public_app_url}/?invite={quote(invitation['token'])}"
+            background_tasks.add_task(
+                send_email, config, data.email, "Flowboard invitation", f"Join the workspace: {link}"
+            )
+        return invitation
+
+    @router.get("/invitations", response_model=list[InvitationOut], tags=["collaboration"])
+    def invitations(request: Request) -> list[dict]:
+        owner_actor(request)
+        return auth.list_invitations()
 
     @router.get("/members", response_model=list[UserOut], tags=["collaboration"])
     def members(request: Request) -> list[dict]:
@@ -254,8 +367,52 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=422, detail=str(error)) from error
         if comment is None:
             raise HTTPException(status_code=404, detail="Task not found")
-        await realtime.broadcast({"type": "comment.created", "taskId": task_id, "comment": comment})
+        await realtime.publish({"type": "comment.created", "taskId": task_id, "comment": comment})
         return comment
+
+    @router.patch("/comments/{comment_id}", response_model=CommentOut, tags=["comments"])
+    async def update_comment(comment_id: str, data: CommentUpdate, request: Request) -> dict:
+        actor = authenticated_actor(request)
+        comment = repository.update_comment(
+            comment_id, actor.id, data.text, data.resolved, actor.role == "owner"
+        )
+        if comment is None:
+            raise HTTPException(status_code=404, detail="Comment not found")
+        await realtime.publish({"type": "comment.updated", "comment": comment})
+        return comment
+
+    @router.delete("/comments/{comment_id}", status_code=204, tags=["comments"])
+    async def delete_comment(comment_id: str, request: Request) -> Response:
+        actor = authenticated_actor(request)
+        if not repository.delete_comment(comment_id, actor.id, actor.role == "owner"):
+            raise HTTPException(status_code=404, detail="Comment not found")
+        await realtime.publish({"type": "comment.deleted", "commentId": comment_id})
+        return Response(status_code=204)
+
+    @router.post("/comments/{comment_id}/reactions", response_model=CommentOut, tags=["comments"])
+    async def react_to_comment(comment_id: str, data: CommentReaction, request: Request) -> dict:
+        actor = authenticated_actor(request)
+        comment = repository.toggle_reaction(comment_id, actor.id, data.emoji)
+        if comment is None:
+            raise HTTPException(status_code=404, detail="Comment not found")
+        await realtime.publish({"type": "comment.updated", "comment": comment})
+        return comment
+
+    @router.get("/tasks/{task_id}/watchers", tags=["comments"])
+    def task_watchers(task_id: str, request: Request) -> list[dict]:
+        authenticated_actor(request)
+        watchers = repository.list_watchers(task_id)
+        if watchers is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        return watchers
+
+    @router.put("/tasks/{task_id}/watchers/me", tags=["comments"])
+    def watch_task(task_id: str, data: WatcherUpdate, request: Request) -> dict[str, bool]:
+        actor = authenticated_actor(request)
+        watching = repository.set_watching(task_id, actor.id, data.watching)
+        if watching is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        return {"watching": watching}
 
     @router.post("/tasks/{task_id}/timer/start", response_model=TaskOut, tags=["time tracking"])
     def start_task_timer(task_id: str) -> dict:
@@ -280,8 +437,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def search_tasks(
         q: str = "", task_status: Annotated[str | None, Query(alias="status")] = None,
         priority: str | None = None, assignee: str | None = None, tag: str | None = None,
+        board_id: Annotated[str | None, Query(alias="boardId")] = None,
+        deadline_from: Annotated[str | None, Query(alias="deadlineFrom")] = None,
+        deadline_to: Annotated[str | None, Query(alias="deadlineTo")] = None,
+        archived: bool | None = None,
+        limit: Annotated[int, Query(ge=1, le=500)] = 100,
+        offset: Annotated[int, Query(ge=0)] = 0,
     ) -> list[dict]:
-        return repository.search_tasks(q, task_status, priority, assignee, tag)
+        return repository.search_tasks(
+            q, task_status, priority, assignee, tag, board_id, deadline_from, deadline_to,
+            archived, limit, offset,
+        )
 
     @router.post("/saved-filters", response_model=SavedFilterOut, status_code=201, tags=["search"])
     def save_filter(data: SavedFilterCreate, request: Request) -> dict:
@@ -316,12 +482,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if len(content) > config.max_attachment_size:
             raise HTTPException(status_code=413, detail="Attachment is too large")
         clean_name = Path(file.filename or "file").name[:100]
-        return repository.add_attachment(
+        media_type = (file.content_type or "application/octet-stream")[:100]
+        blocked_types = {"text/html", "image/svg+xml", "application/javascript", "application/x-sh"}
+        blocked_extensions = {".exe", ".dll", ".sh", ".bat", ".cmd", ".js", ".html", ".svg"}
+        if media_type in blocked_types or Path(clean_name).suffix.lower() in blocked_extensions or content.startswith((b"MZ", b"\x7fELF")):
+            raise HTTPException(status_code=415, detail="Attachment type is not allowed")
+        attachment = repository.add_attachment(
             task_id,
             clean_name,
-            (file.content_type or "application/octet-stream")[:100],
-            content,
+            media_type,
+            b"" if object_storage.enabled else content,
         )
+        if attachment and object_storage.enabled:
+            key, checksum = object_storage.put(attachment["id"], content)
+            repository.bind_attachment_object(attachment["id"], key, checksum)
+            attachment["size"] = len(content)
+            with database._lock, database.connect() as connection:
+                connection.execute("UPDATE attachments SET size=? WHERE id=?", (len(content), attachment["id"]))
+        return attachment
 
     @router.get("/attachments/{attachment_id}", tags=["attachments"])
     def download_attachment(attachment_id: str) -> StreamingResponse:
@@ -329,8 +507,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if attachment is None:
             raise HTTPException(status_code=404, detail="Attachment not found")
         encoded_filename = quote(attachment["name"], safe="")
+        object_ref = repository.get_attachment_object(attachment_id)
+        try:
+            content = object_storage.get(object_ref["storage_key"]) if object_ref else attachment["content"]
+        except FileNotFoundError as error:
+            raise HTTPException(status_code=404, detail="Attachment object is missing") from error
         return StreamingResponse(
-            iter([attachment["content"]]),
+            iter([content]),
             media_type=attachment["media_type"],
             headers={
                 "Content-Disposition": f"attachment; filename=download; filename*=UTF-8''{encoded_filename}"
@@ -339,8 +522,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @router.delete("/attachments/{attachment_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["attachments"])
     def delete_attachment(attachment_id: str) -> Response:
+        object_ref = repository.get_attachment_object(attachment_id)
         if not repository.delete_attachment(attachment_id):
             raise HTTPException(status_code=404, detail="Attachment not found")
+        if object_ref:
+            object_storage.delete(object_ref["storage_key"])
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @router.get("/automations", response_model=AutomationSettings, tags=["workspace"])
@@ -362,6 +548,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not repository.read_notification(notification_id, actor.id if actor.authenticated else None):
             raise HTTPException(status_code=404, detail="Notification not found")
         return Response(status_code=204)
+
+    @router.post("/notifications/read-all", tags=["notifications"])
+    def read_all_notifications(request: Request) -> dict[str, int]:
+        actor: Actor = request.state.actor
+        return {"updated": repository.read_all_notifications(actor.id if actor.authenticated else None)}
+
+    @router.get("/notifications/summary", tags=["notifications"])
+    def notification_summary(request: Request) -> dict:
+        actor: Actor = request.state.actor
+        return repository.notification_summary(actor.id if actor.authenticated else None)
+
+    @router.post("/goals", response_model=GoalOut, status_code=201, tags=["planning"])
+    def create_goal(data: GoalCreate) -> dict:
+        return repository.create_goal(data.title, data.description, data.target_date, data.color)
+
+    @router.get("/goals", response_model=list[GoalOut], tags=["planning"])
+    def goals() -> list[dict]:
+        return repository.list_goals()
+
+    @router.delete("/goals/{goal_id}", status_code=204, tags=["planning"])
+    def delete_goal(goal_id: str) -> Response:
+        if not repository.delete_goal(goal_id):
+            raise HTTPException(status_code=404, detail="Goal not found")
+        return Response(status_code=204)
+
+    @router.get("/planning/timeline", tags=["planning"])
+    def planning_timeline(board_id: Annotated[str | None, Query(alias="boardId")] = None) -> dict:
+        tasks = repository.list_tasks(board_id, False)
+        return {
+            "goals": repository.list_goals(),
+            "tasks": [task for task in tasks if task.get("startDate") or task.get("deadline") or task.get("milestone")],
+        }
+
+    @router.get("/planning/workload", tags=["planning"])
+    def planning_workload() -> list[dict]:
+        buckets: dict[str, dict[str, int | str]] = {}
+        for task in repository.list_tasks(archived=False):
+            assignee = task.get("assignee") or "Unassigned"
+            bucket = buckets.setdefault(assignee, {"assignee": assignee, "tasks": 0, "estimatedMinutes": 0, "spentSeconds": 0})
+            bucket["tasks"] = int(bucket["tasks"]) + 1
+            bucket["estimatedMinutes"] = int(bucket["estimatedMinutes"]) + int(task.get("estimatedMinutes") or 0)
+            bucket["spentSeconds"] = int(bucket["spentSeconds"]) + int(task.get("timeSpentSeconds") or 0)
+        return list(buckets.values())
 
     @router.get("/notification-preferences", response_model=NotificationPreferences, tags=["notifications"])
     def notification_preferences(request: Request) -> dict:
@@ -395,6 +624,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         owner_actor(request)
         return await deliver_outbox(repository)
 
+    @router.get("/jobs", response_model=list[JobOut], tags=["system"])
+    def jobs(request: Request) -> list[dict]:
+        owner_actor(request)
+        return repository.list_jobs()
+
+    @router.post("/jobs/process", tags=["system"])
+    async def run_jobs(request: Request) -> dict[str, int]:
+        owner_actor(request)
+        return await process_jobs(repository, config)
+
     @router.get("/workspace", response_model=WorkspaceOut, tags=["workspace"])
     def get_workspace(response: Response) -> dict:
         workspace = repository.get_workspace()
@@ -417,18 +656,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise HTTPException(status_code=400, detail="Invalid If-Match revision") from error
         try:
             workspace = repository.replace_workspace(data, expected, actor.id if actor.authenticated else None)
-            await realtime.broadcast({"type": "workspace.updated", "revision": workspace["revision"]})
-            background_tasks.add_task(deliver_outbox, repository)
+            await realtime.publish({"type": "workspace.updated", "revision": workspace["revision"]})
+            repository.enqueue_job("webhooks.deliver", {"revision": workspace["revision"]})
+            background_tasks.add_task(process_jobs, repository, config)
             if actor.authenticated:
                 preferences = repository.get_notification_preferences(actor.id)
                 if preferences.get("emailEnabled"):
-                    background_tasks.add_task(
-                        send_email,
-                        config,
-                        actor.email,
-                        "Flowboard synchronized",
-                        f"Workspace revision {workspace['revision']} was saved.",
-                    )
+                    repository.enqueue_job("email.send", {
+                        "recipient": actor.email, "subject": "Flowboard synchronized",
+                        "body": f"Workspace revision {workspace['revision']} was saved.",
+                    })
             return workspace
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
@@ -450,7 +687,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         workspace = repository.restore_revision(revision_id, actor.id if actor.authenticated else None)
         if workspace is None:
             raise HTTPException(status_code=404, detail="Revision not found")
-        await realtime.broadcast({"type": "workspace.updated", "revision": workspace["revision"]})
+        await realtime.publish({"type": "workspace.updated", "revision": workspace["revision"]})
         return workspace
 
     @router.get("/admin/backup", response_model=WorkspaceOut, tags=["system"])
@@ -495,7 +732,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     value = message.get("value")
                     if not isinstance(value, (str, list)):
                         continue
-                    await realtime.broadcast({
+                    await realtime.publish({
                         "type": "task.draft",
                         "taskId": str(message.get("taskId") or "")[:100],
                         "field": field,

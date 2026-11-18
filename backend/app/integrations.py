@@ -55,3 +55,27 @@ async def send_email(settings: Settings, recipient: str, subject: str, body: str
         return True
     except Exception:
         return False
+
+
+async def process_jobs(repository: Repository, settings: Settings, limit: int = 10) -> dict[str, int]:
+    completed = 0
+    failed = 0
+    for job in repository.claim_jobs(limit):
+        try:
+            if job["kind"] == "webhooks.deliver":
+                result = await deliver_outbox(repository)
+                if result["failed"]:
+                    raise RuntimeError(f"{result['failed']} webhook deliveries failed")
+            elif job["kind"] == "email.send":
+                payload = job["payload"]
+                delivered = await send_email(
+                    settings, payload["recipient"], payload["subject"], payload["body"]
+                )
+                if settings.smtp_host and not delivered:
+                    raise RuntimeError("Email delivery failed")
+            repository.finish_job(job["id"])
+            completed += 1
+        except Exception as error:
+            repository.finish_job(job["id"], str(error))
+            failed += 1
+    return {"completed": completed, "failed": failed}

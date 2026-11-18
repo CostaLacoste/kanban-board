@@ -11,6 +11,8 @@ const tasks = [
     priority: "high",
     tags: ["релиз", "дизайн"],
     checklist: [{ text: "Обновить документацию", done: false }],
+    assignee: "Анна",
+    deadline: "2030-05-20",
   },
   {
     id: "2",
@@ -19,6 +21,8 @@ const tasks = [
     priority: "low",
     tags: ["личное"],
     checklist: [],
+    assignee: "Борис",
+    deadline: "2030-06-10",
   },
 ];
 
@@ -45,5 +49,12 @@ describe("фильтрация задач", () => {
   test("поддерживает старые задачи без тегов и чек-листа", () => {
     const legacyTask = { title: "Старая", description: "", priority: "low" };
     assert.deepEqual(filterTasks([legacyTask], "старая", "all", "all"), [legacyTask]);
+  });
+
+  test("фильтрует по исполнителю и диапазону срока", () => {
+    const result = filterTasks(tasks, "", "all", "all", {
+      assignee: "Анна", deadlineFrom: "2030-05-01", deadlineTo: "2030-05-31",
+    });
+    assert.deepEqual(result.map((task) => task.id), ["1"]);
   });
 });

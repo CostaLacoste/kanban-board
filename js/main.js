@@ -32,18 +32,31 @@ import { setLanguage, t, translateDocument } from "./i18n.js";
 import { applyAutomations, defaultAutomations } from "./automations.js";
 import {
   connectRealtime,
+  createGoal,
+  createInvitation,
   createTaskComment,
   flushWorkspaceQueue,
   getAccountMembers,
   getApiConfiguration,
   getCurrentAccount,
+  getGoals,
+  getInvitations,
+  getNotifications,
+  getSessions,
   loginAccount,
   loadRemoteWorkspace,
   logoutAccount,
+  markAllNotificationsRead,
+  markNotificationRead,
+  reactToComment,
   registerAccount,
+  requestPasswordReset,
+  revokeSession,
   scheduleWorkspaceSync,
   sendRealtime,
   setApiConfiguration,
+  setTaskWatching,
+  updateComment,
   updateAccountMember,
 } from "./api.js";
 import {
@@ -63,6 +76,9 @@ const taskDialogTitle = document.querySelector("#task-dialog-title");
 const searchInput = document.querySelector("#task-search");
 const prioritySelect = document.querySelector("#priority-filter");
 const tagSelect = document.querySelector("#tag-filter");
+const assigneeFilter = document.querySelector("#assignee-filter");
+const deadlineFromFilter = document.querySelector("#deadline-from-filter");
+const deadlineToFilter = document.querySelector("#deadline-to-filter");
 const sortSelect = document.querySelector("#sort-select");
 const themeSelect = document.querySelector("#theme-select");
 const languageSelect = document.querySelector("#language-select");
@@ -104,6 +120,16 @@ const accountMembers = document.querySelector("[data-account-members]");
 const accountButton = document.querySelector("[data-account-button]");
 const commentList = document.querySelector("[data-comment-list]");
 const collaborationStatus = document.querySelector("[data-collaboration-status]");
+const notificationsDialog = document.querySelector("#notifications-dialog");
+const notificationList = document.querySelector("[data-notification-list]");
+const notificationCount = document.querySelector("[data-notification-count]");
+const notificationFilter = document.querySelector("#notification-filter");
+const invitationsList = document.querySelector("[data-invitations]");
+const sessionsList = document.querySelector("[data-sessions]");
+const ownerTools = document.querySelector("[data-owner-tools]");
+const goalList = document.querySelector("[data-goal-list]");
+const roadmap = document.querySelector("[data-roadmap]");
+const goalSelect = document.querySelector("#task-goal");
 
 let activeBoardId = "default";
 let sortMode = "manual";
@@ -125,6 +151,10 @@ let localWorkspaceGeneration = 0;
 let currentAccount = null;
 let remoteMembers = [];
 let draftTimer = null;
+let goals = [];
+let remoteNotifications = [];
+let invitations = [];
+let sessions = [];
 
 function getBoardTasks({ archived = false } = {}) {
   return getTasks().filter(
@@ -162,6 +192,11 @@ function syncTagFilter(tasks) {
   tagSelect.replaceChildren(new Option(t("filter.allTags"), "all"));
   tags.forEach((tag) => tagSelect.add(new Option(`#${tag}`, tag)));
   tagSelect.value = tags.includes(selectedTag) ? selectedTag : "all";
+  const selectedAssignee = assigneeFilter.value;
+  const assignees = [...new Set(tasks.map((task) => task.assignee).filter(Boolean))].sort();
+  assigneeFilter.replaceChildren(new Option(t("filter.allAssignees"), "all"));
+  assignees.forEach((assignee) => assigneeFilter.add(new Option(assignee, assignee)));
+  assigneeFilter.value = assignees.includes(selectedAssignee) ? selectedAssignee : "all";
 }
 
 function getVisibleTasks(tasks) {
@@ -171,6 +206,11 @@ function getVisibleTasks(tasks) {
       searchInput.value,
       prioritySelect.value,
       tagSelect.value,
+      {
+        assignee: assigneeFilter.value,
+        deadlineFrom: deadlineFromFilter.value,
+        deadlineTo: deadlineToFilter.value,
+      },
     ),
     sortMode,
   );
@@ -199,6 +239,7 @@ function persistWorkspace() {
     saveSetting("activity", activity),
     saveSetting("accessibility", accessibility),
     saveSetting("automations", automations),
+    saveSetting("goals", goals),
   ].every(Boolean);
   if (saved && !applyingRemoteWorkspace) {
     localWorkspaceGeneration += 1;
@@ -302,6 +343,9 @@ function renderAccountPanel() {
     : t("account.offline");
   accountButton.textContent = currentAccount ? `◎ ${currentAccount.name}` : t("account.open");
   accountMembers.replaceChildren();
+  invitationsList.replaceChildren();
+  sessionsList.replaceChildren();
+  ownerTools.hidden = currentAccount?.role !== "owner";
   if (!currentAccount) return;
   accountProfile.querySelector("[data-account-name]").textContent = currentAccount.name;
   accountProfile.querySelector("[data-account-email]").textContent = currentAccount.email;
@@ -339,17 +383,56 @@ function renderAccountPanel() {
     }
     accountMembers.append(row);
   });
+  invitations.forEach((invitation) => {
+    const row = document.createElement("div");
+    row.className = "account-member";
+    const status = invitation.acceptedAt ? t("account.inviteAccepted") : t("account.invitePending");
+    row.innerHTML = `<div><strong></strong><span></span></div><span></span>`;
+    row.querySelector("strong").textContent = invitation.email;
+    row.querySelector("div span").textContent = roleLabel(invitation.role);
+    row.lastElementChild.textContent = status;
+    invitationsList.append(row);
+  });
+  sessions.forEach((session) => {
+    const row = document.createElement("div");
+    row.className = "account-member";
+    const identity = document.createElement("div");
+    const agent = document.createElement("strong");
+    agent.textContent = session.current ? `${t("account.currentSession")} · ${session.userAgent}` : session.userAgent;
+    const address = document.createElement("span");
+    address.textContent = `${session.ipAddress} · ${new Intl.DateTimeFormat(undefined, { dateStyle: "short", timeStyle: "short" }).format(new Date(session.lastSeenAt))}`;
+    identity.append(agent, address);
+    const revoke = document.createElement("button");
+    revoke.className = "mini-button";
+    revoke.type = "button";
+    revoke.dataset.action = "revoke-session";
+    revoke.dataset.sessionId = session.id;
+    revoke.textContent = t("account.revokeSession");
+    row.append(identity, revoke);
+    sessionsList.append(row);
+  });
 }
 
 async function refreshAccount() {
   currentAccount = await getCurrentAccount();
   remoteMembers = currentAccount ? await getAccountMembers() : [];
+  [invitations, sessions, remoteNotifications, goals] = currentAccount
+    ? await Promise.all([
+      currentAccount.role === "owner" ? getInvitations().catch(() => []) : [],
+      getSessions().catch(() => []),
+      getNotifications().catch(() => []),
+      getGoals().catch(() => goals),
+    ])
+    : [[], [], [], goals];
   if (remoteMembers.length > 0) {
     members = remoteMembers.map((member) => member.name);
     saveSetting("members", members);
     syncTaskFormOptions(form.elements.taskId.value);
   }
   renderAccountPanel();
+  renderNotificationCenter();
+  renderPlanning();
+  syncTaskFormOptions(form.elements.taskId.value);
 }
 
 async function authenticateAccount(mode) {
@@ -367,6 +450,83 @@ async function authenticateAccount(mode) {
     accountStatus.textContent = `${t("account.error")}: ${error.message}`;
     showNotification(t("account.error"), "error");
   }
+}
+
+function renderNotificationCenter() {
+  const unread = remoteNotifications.filter((item) => !item.readAt).length;
+  notificationCount.textContent = String(unread);
+  notificationCount.hidden = unread === 0;
+  notificationList.replaceChildren();
+  const selectedKind = notificationFilter.value;
+  const visible = remoteNotifications.filter((item) => !selectedKind || item.kind === selectedKind);
+  if (visible.length === 0) {
+    const empty = document.createElement("p");
+    empty.textContent = t("notifications.empty");
+    notificationList.append(empty);
+    return;
+  }
+  visible.forEach((notification) => {
+    const item = document.createElement("article");
+    item.className = `notification-center__item${notification.readAt ? "" : " is-unread"}`;
+    const title = document.createElement("strong");
+    title.textContent = notification.title;
+    const body = document.createElement("p");
+    body.textContent = notification.body;
+    const footer = document.createElement("div");
+    footer.className = "comment-item__meta";
+    const date = document.createElement("time");
+    date.textContent = new Intl.DateTimeFormat(undefined, { dateStyle: "short", timeStyle: "short" }).format(new Date(notification.createdAt));
+    footer.append(date);
+    if (!notification.readAt) {
+      const read = document.createElement("button");
+      read.className = "mini-button";
+      read.type = "button";
+      read.dataset.action = "read-notification";
+      read.dataset.notificationId = notification.id;
+      read.textContent = t("notifications.read");
+      footer.append(read);
+    }
+    item.append(title, body, footer);
+    notificationList.append(item);
+  });
+}
+
+function renderPlanning() {
+  if (!goalList || !roadmap) return;
+  goalList.replaceChildren();
+  goals.forEach((goal) => {
+    const item = document.createElement("article");
+    item.className = "goal-item";
+    const header = document.createElement("div");
+    header.className = "comment-item__meta";
+    const title = document.createElement("strong");
+    title.textContent = goal.title;
+    const target = document.createElement("span");
+    target.textContent = goal.targetDate || t("planning.noDate");
+    header.append(title, target);
+    const bar = document.createElement("div");
+    bar.className = "goal-progress";
+    const completed = getTasks().filter((task) => task.goalId === goal.id && task.status === "done").length;
+    const linked = getTasks().filter((task) => task.goalId === goal.id).length;
+    const progress = linked ? Math.round(completed / linked * 100) : (goal.progress ?? 0);
+    bar.innerHTML = `<span style="--goal-progress:${progress}%"></span><strong>${progress}%</strong>`;
+    item.append(header, bar);
+    goalList.append(item);
+  });
+  roadmap.replaceChildren();
+  getTasks()
+    .filter((task) => !task.archived && (task.startDate || task.deadline || task.milestone))
+    .sort((a, b) => String(a.startDate || a.deadline).localeCompare(String(b.startDate || b.deadline)))
+    .forEach((task) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "roadmap-item";
+      row.dataset.action = "edit-task";
+      row.dataset.taskId = task.id;
+      const marker = task.milestone ? "◆" : "━";
+      row.textContent = `${marker} ${task.startDate || "…"} → ${task.deadline || "…"} · ${task.title}`;
+      roadmap.append(row);
+    });
 }
 
 function appendCommentText(container, text) {
@@ -397,6 +557,9 @@ function renderTaskComments(task) {
   comments.forEach((comment) => {
     const item = document.createElement("article");
     item.className = "comment-item";
+    item.dataset.commentId = comment.id;
+    if (comment.parentId) item.classList.add("comment-item--reply");
+    if (comment.resolvedAt) item.classList.add("is-resolved");
     const meta = document.createElement("div");
     meta.className = "comment-item__meta";
     const author = document.createElement("strong");
@@ -408,7 +571,34 @@ function renderTaskComments(task) {
     const body = document.createElement("p");
     appendCommentText(body, comment.text);
     meta.append(author, date);
-    item.append(meta, body);
+    const actions = document.createElement("div");
+    actions.className = "comment-actions";
+    if (currentAccount) {
+      const reply = document.createElement("button");
+      reply.className = "mini-button";
+      reply.type = "button";
+      reply.dataset.action = "reply-comment";
+      reply.dataset.commentId = comment.id;
+      reply.textContent = t("comment.reply");
+      const react = document.createElement("button");
+      react.className = "mini-button";
+      react.type = "button";
+      react.dataset.action = "react-comment";
+      react.dataset.commentId = comment.id;
+      react.textContent = `👍 ${comment.reactions?.["👍"]?.length || ""}`;
+      actions.append(reply, react);
+      if (currentAccount.role === "owner" || comment.authorId === currentAccount.id) {
+        const resolve = document.createElement("button");
+        resolve.className = "mini-button";
+        resolve.type = "button";
+        resolve.dataset.action = "resolve-comment";
+        resolve.dataset.commentId = comment.id;
+        resolve.dataset.resolved = String(Boolean(comment.resolvedAt));
+        resolve.textContent = t(comment.resolvedAt ? "comment.reopen" : "comment.resolve");
+        actions.append(resolve);
+      }
+    }
+    item.append(meta, body, actions);
     commentList.append(item);
   });
 }
@@ -443,6 +633,21 @@ function handleRealtimeEvent(message) {
     saveTasks(getTasks());
     if (activeTaskId === task.id) renderTaskComments(getTaskById(task.id));
     refreshBoard();
+  }
+  if (message.type === "comment.updated") {
+    setTasks(getTasks().map((task) => ({
+      ...task,
+      comments: (task.comments || []).map((comment) => comment.id === message.comment.id ? message.comment : comment),
+    })));
+    saveTasks(getTasks());
+    if (activeTaskId) renderTaskComments(getTaskById(activeTaskId));
+  }
+  if (message.type === "comment.deleted") {
+    setTasks(getTasks().map((task) => ({
+      ...task, comments: (task.comments || []).filter((comment) => comment.id !== message.commentId),
+    })));
+    saveTasks(getTasks());
+    if (activeTaskId) renderTaskComments(getTaskById(activeTaskId));
   }
 }
 
@@ -526,6 +731,11 @@ function syncTaskFormOptions(taskId = "") {
 
   templateSelect.replaceChildren(new Option(t("extra.noTemplate"), ""));
   templates.forEach((template) => templateSelect.add(new Option(template.name, template.id)));
+
+  const selectedGoal = goalSelect.value;
+  goalSelect.replaceChildren(new Option(t("planning.noGoal"), ""));
+  goals.forEach((goal) => goalSelect.add(new Option(goal.title, goal.id)));
+  goalSelect.value = goals.some((goal) => goal.id === selectedGoal) ? selectedGoal : "";
 }
 
 function applyAccessibility() {
@@ -643,6 +853,7 @@ function renderProductivityHub() {
     input.checked = Boolean(automations[input.dataset.automation]);
   });
   applyAccessibility();
+  renderPlanning();
 }
 
 function setView(view) {
@@ -711,6 +922,7 @@ function createSyncPayload() {
     language: languageSelect.value || "ru",
     sort: sortMode,
     automations,
+    goals,
   };
 }
 
@@ -725,6 +937,7 @@ function applyRemoteWorkspace(payload) {
   activity = Array.isArray(payload.activity) ? payload.activity : activity;
   accessibility = { ...accessibility, ...(payload.accessibility || {}) };
   automations = { ...defaultAutomations, ...(payload.automations || {}) };
+  goals = Array.isArray(payload.goals) ? payload.goals : goals;
   activeBoardId = getBoardById(payload.activeBoardId) ? payload.activeBoardId : getBoards()[0].id;
   sortMode = payload.sort || sortMode;
   sortSelect.value = sortMode;
@@ -854,6 +1067,8 @@ function openCreateDialog() {
   document.querySelector("[data-comment-field]").hidden = true;
   commentList.hidden = true;
   collaborationStatus.hidden = true;
+  form.elements.milestone.checked = false;
+  goalSelect.value = "";
   taskDialogTitle.textContent = t("task.new");
   taskDialog.showModal();
   form.elements.title.focus();
@@ -880,6 +1095,9 @@ function openEditDialog(taskId) {
   form.elements.color.value = task.color ?? "default";
   form.elements.cover.value = task.cover ?? "";
   form.elements.estimatedMinutes.value = task.estimatedMinutes || "";
+  form.elements.startDate.value = task.startDate ?? "";
+  form.elements.goalId.value = task.goalId ?? "";
+  form.elements.milestone.checked = Boolean(task.milestone);
   [...form.elements.dependsOn.options].forEach((option) => {
     option.selected = task.dependsOn?.includes(option.value);
   });
@@ -1074,6 +1292,7 @@ form.addEventListener("submit", (event) => {
   event.preventDefault();
   const taskData = Object.fromEntries(new FormData(form).entries());
   taskData.dependsOn = [...dependencySelect.selectedOptions].map((option) => option.value);
+  taskData.milestone = form.elements.milestone.checked;
   taskData.checklist = collectChecklist();
   taskData.boardId = activeBoardId;
   const isEditing = Boolean(taskData.taskId);
@@ -1091,7 +1310,7 @@ form.addEventListener("submit", (event) => {
       authorId: currentAccount?.id ?? null,
       text: comment,
       mentions: [],
-      parentId: null,
+      parentId: form.elements.comment.dataset.parentId || null,
       createdAt: new Date().toISOString(),
       editedAt: null,
     };
@@ -1121,6 +1340,7 @@ form.addEventListener("submit", (event) => {
         parentId: newComment.parentId,
       });
     }
+    delete form.elements.comment.dataset.parentId;
   } catch (error) {
     discardLastSnapshot();
     showNotification(error.message, "error");
@@ -1155,7 +1375,7 @@ document.addEventListener("click", (event) => {
   const button = event.target.closest("[data-action]");
   if (!button) return;
 
-  const taskId = button.closest(".task-card, .archive-item")?.dataset.taskId;
+  const taskId = button.closest(".task-card, .archive-item")?.dataset.taskId ?? button.dataset.taskId;
 
   switch (button.dataset.action) {
     case "open-task-dialog": openCreateDialog(); break;
@@ -1173,12 +1393,102 @@ document.addEventListener("click", (event) => {
       break;
     case "account-login": void authenticateAccount("login"); break;
     case "account-register": void authenticateAccount("register"); break;
+    case "request-password-reset": {
+      const email = document.querySelector("#account-email").value.trim();
+      if (!email) break;
+      void requestPasswordReset(email).then((result) => {
+        accountStatus.textContent = result.resetToken
+          ? `${t("account.resetSent")} · ${result.resetToken}`
+          : t("account.resetSent");
+      }).catch(() => showNotification(t("account.error"), "error"));
+      break;
+    }
+    case "send-invitation": {
+      const email = document.querySelector("#invite-email").value.trim();
+      const role = document.querySelector("#invite-role").value;
+      if (!email) break;
+      void createInvitation(email, role).then(async (invitation) => {
+        document.querySelector("#invite-email").value = "";
+        await refreshAccount();
+        showNotification(invitation.token ? `${t("account.inviteCreated")}: ${invitation.token}` : t("account.inviteCreated"));
+      }).catch(() => showNotification(t("account.error"), "error"));
+      break;
+    }
+    case "revoke-session":
+      void revokeSession(button.dataset.sessionId).then(() => refreshAccount());
+      break;
     case "account-logout":
       logoutAccount();
       currentAccount = null;
       remoteMembers = [];
       renderAccountPanel();
       break;
+    case "open-notifications":
+      renderNotificationCenter();
+      notificationsDialog.showModal();
+      break;
+    case "close-notifications": notificationsDialog.close(); break;
+    case "read-notification":
+      void markNotificationRead(button.dataset.notificationId).then(async () => {
+        remoteNotifications = await getNotifications().catch(() => remoteNotifications);
+        renderNotificationCenter();
+      });
+      break;
+    case "read-all-notifications":
+      void markAllNotificationsRead().then(async () => {
+        remoteNotifications = await getNotifications().catch(() => remoteNotifications);
+        renderNotificationCenter();
+      });
+      break;
+    case "create-goal": {
+      const title = document.querySelector("#goal-title").value.trim();
+      const targetDate = document.querySelector("#goal-date").value;
+      if (!title) break;
+      const localGoal = { id: globalThis.crypto?.randomUUID?.() ?? String(Date.now()), title, description: "", targetDate, color: "lime", progress: 0 };
+      void (currentAccount ? createGoal({ title, targetDate, description: "", color: "lime" }) : Promise.resolve(localGoal))
+        .then((goal) => {
+          goals = [...goals, goal];
+          saveSetting("goals", goals);
+          document.querySelector("#goal-title").value = "";
+          document.querySelector("#goal-date").value = "";
+          syncTaskFormOptions(form.elements.taskId.value);
+          renderPlanning();
+        }).catch(() => showNotification(t("account.error"), "error"));
+      break;
+    }
+    case "reply-comment":
+      form.elements.comment.dataset.parentId = button.dataset.commentId;
+      form.elements.comment.placeholder = t("comment.replyPlaceholder");
+      form.elements.comment.focus();
+      break;
+    case "react-comment":
+      void reactToComment(button.dataset.commentId, "👍").then((updated) => {
+        const activeTask = getTaskById(form.elements.taskId.value);
+        if (!activeTask) return;
+        updateTask(activeTask.id, { comments: activeTask.comments.map((item) => item.id === updated.id ? updated : item) });
+        saveTasks(getTasks());
+        renderTaskComments(getTaskById(activeTask.id));
+      });
+      break;
+    case "resolve-comment":
+      void updateComment(button.dataset.commentId, { resolved: button.dataset.resolved !== "true" }).then((updated) => {
+        const activeTask = getTaskById(form.elements.taskId.value);
+        if (!activeTask) return;
+        updateTask(activeTask.id, { comments: activeTask.comments.map((item) => item.id === updated.id ? updated : item) });
+        saveTasks(getTasks());
+        renderTaskComments(getTaskById(activeTask.id));
+      });
+      break;
+    case "toggle-watch-task": {
+      const activeTaskId = form.elements.taskId.value;
+      if (!activeTaskId || !currentAccount) break;
+      const watching = button.dataset.watching !== "true";
+      void setTaskWatching(activeTaskId, watching).then(() => {
+        button.dataset.watching = String(watching);
+        button.textContent = t(watching ? "comment.unwatch" : "comment.watch");
+      });
+      break;
+    }
     case "open-command-palette":
       commandSearch.value = "";
       renderCommandPalette();
@@ -1222,6 +1532,9 @@ document.addEventListener("click", (event) => {
       searchInput.value = "";
       prioritySelect.value = "all";
       tagSelect.value = "all";
+      assigneeFilter.value = "all";
+      deadlineFromFilter.value = "";
+      deadlineToFilter.value = "";
       refreshBoard();
       break;
     case "undo": undoLastAction(); break;
@@ -1398,6 +1711,9 @@ document.addEventListener("click", (event) => {
 searchInput.addEventListener("input", refreshBoard);
 prioritySelect.addEventListener("change", refreshBoard);
 tagSelect.addEventListener("change", refreshBoard);
+assigneeFilter.addEventListener("change", refreshBoard);
+deadlineFromFilter.addEventListener("change", refreshBoard);
+deadlineToFilter.addEventListener("change", refreshBoard);
 
 sortSelect.addEventListener("change", () => {
   sortMode = sortSelect.value;
@@ -1423,7 +1739,11 @@ languageSelect.addEventListener("change", () => {
   updateUndoButton();
   refreshBoard();
   renderAccountPanel();
+  renderNotificationCenter();
+  renderPlanning();
 });
+
+notificationFilter.addEventListener("change", renderNotificationCenter);
 
 importInput.addEventListener("change", () => {
   const [file] = importInput.files;
@@ -1534,7 +1854,7 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
-[taskDialog, deleteDialog, archiveDialog, productivityDialog, commandDialog, accountDialog].forEach((dialog) => {
+[taskDialog, deleteDialog, archiveDialog, productivityDialog, commandDialog, accountDialog, notificationsDialog].forEach((dialog) => {
   dialog.addEventListener("click", (event) => {
     if (event.target === dialog) dialog.close();
   });
@@ -1577,6 +1897,7 @@ window.addEventListener("storage", (event) => {
   members = loadSetting("members", []);
   activity = loadSetting("activity", []);
   automations = { ...defaultAutomations, ...(loadSetting("automations", {}) || {}) };
+  goals = Array.isArray(loadSetting("goals", [])) ? loadSetting("goals", []) : [];
   refreshBoard();
 });
 
@@ -1605,6 +1926,7 @@ automations = {
   ...defaultAutomations,
   ...(loadSetting("automations", {}) || {}),
 };
+goals = Array.isArray(loadSetting("goals", [])) ? loadSetting("goals", []) : [];
 calendarMonth.value = todayMonth();
 const language = loadSetting("language", "ru");
 setLanguage(language);

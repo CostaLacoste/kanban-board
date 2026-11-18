@@ -66,6 +66,16 @@ describe("задачи", () => {
     assert.equal(task.attachments[0].dataUrl, "data:text/plain;base64,SGVsbG8=");
   });
 
+  test("сохраняет цель, даты дорожной карты и контрольную точку", () => {
+    const task = createTask({
+      title: "Milestone", startDate: "2030-01-01", deadline: "2030-02-01",
+      goalId: "goal-1", milestone: true,
+    });
+    assert.equal(task.startDate, "2030-01-01");
+    assert.equal(task.goalId, "goal-1");
+    assert.equal(task.milestone, true);
+  });
+
   test("поддерживает пользовательский статус и нормализует приоритет", () => {
     const task = createTask({
       title: "Задача",

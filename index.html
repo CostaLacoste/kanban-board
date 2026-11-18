@@ -9,7 +9,7 @@
       content="Flowboard — учебная канбан-доска для управления задачами."
     />
     <title>Flowboard</title>
-    <link rel="stylesheet" href="./css/style.css?v=8" />
+    <link rel="stylesheet" href="./css/style.css?v=9" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <script type="module" src="./js/main.js"></script>
   </head>
@@ -23,6 +23,10 @@
 
       <div class="header-tools">
         <button class="header-action" type="button" data-action="open-account" data-account-button data-i18n="account.open">◎ Аккаунт</button>
+        <button class="header-action notification-button" type="button" data-action="open-notifications">
+          <span data-i18n="notifications.open">◉ Уведомления</span>
+          <strong data-notification-count hidden>0</strong>
+        </button>
         <button class="header-action" type="button" data-action="open-command-palette" data-i18n="command.open">⌘K Команды</button>
         <button class="header-action" type="button" data-action="open-productivity-hub" data-i18n="app.hub">
           ◫ Центр
@@ -186,6 +190,20 @@
           <select id="tag-filter">
             <option value="all" data-i18n="filter.allTags">Все теги</option>
           </select>
+        </label>
+
+        <label class="select-field">
+          <span class="visually-hidden" data-i18n="filter.assignee">Исполнитель</span>
+          <select id="assignee-filter"><option value="all" data-i18n="filter.allAssignees">Все исполнители</option></select>
+        </label>
+
+        <label class="date-filter">
+          <span data-i18n="filter.deadlineFrom">Срок от</span>
+          <input id="deadline-from-filter" type="date" />
+        </label>
+        <label class="date-filter">
+          <span data-i18n="filter.deadlineTo">Срок до</span>
+          <input id="deadline-to-filter" type="date" />
         </label>
 
         <label class="select-field select-field--sort">
@@ -360,6 +378,21 @@
 
         <div class="form-row">
           <label class="form-field">
+            <span data-i18n="planning.startDate">Дата начала</span>
+            <input id="task-start-date" name="startDate" type="date" />
+          </label>
+          <label class="form-field">
+            <span data-i18n="planning.goal">Цель</span>
+            <select id="task-goal" name="goalId"><option value="" data-i18n="planning.noGoal">Без цели</option></select>
+          </label>
+        </div>
+        <label class="toggle-row">
+          <input id="task-milestone" name="milestone" type="checkbox" value="true" />
+          <span data-i18n="planning.milestone">Контрольная точка</span>
+        </label>
+
+        <div class="form-row">
+          <label class="form-field">
             <span data-i18n="time.estimate">Оценка времени, мин.</span>
             <input id="task-estimate" name="estimatedMinutes" type="number" min="0" max="100000" step="5" placeholder="60" />
           </label>
@@ -417,6 +450,7 @@
           <span data-i18n="extra.comment">Новый комментарий</span>
           <textarea id="task-comment" name="comment" rows="2" maxlength="500" placeholder="Добавить комментарий..."></textarea>
           <small data-i18n="comment.mentionHelp">Упомяните участника через @имя или @email.</small>
+          <button class="mini-button" type="button" data-action="toggle-watch-task" data-watching="false" data-i18n="comment.watch">Следить за задачей</button>
         </label>
 
         <div class="form-row">
@@ -508,6 +542,7 @@
             <button class="primary-button" type="button" data-action="account-login" data-i18n="account.login">Войти</button>
             <button class="secondary-button" type="button" data-action="account-register" data-i18n="account.register">Регистрация</button>
           </div>
+          <button class="mini-button" type="button" data-action="request-password-reset" data-i18n="account.resetPassword">Восстановить пароль</button>
         </div>
 
         <div class="account-profile" data-account-profile hidden>
@@ -521,7 +556,42 @@
             <p class="eyebrow" data-i18n="account.team">Команда</p>
             <div class="account-members" data-account-members></div>
           </section>
+          <section data-owner-tools hidden>
+            <p class="eyebrow" data-i18n="account.invite">Пригласить участника</p>
+            <div class="inline-field">
+              <input id="invite-email" type="email" placeholder="member@example.com" />
+              <select id="invite-role">
+                <option value="editor" data-i18n="account.role.editor">Редактор</option>
+                <option value="viewer" data-i18n="account.role.viewer">Читатель</option>
+              </select>
+              <button class="secondary-button" type="button" data-action="send-invitation" data-i18n="account.inviteSend">Отправить</button>
+            </div>
+            <div class="account-members" data-invitations></div>
+          </section>
+          <section>
+            <p class="eyebrow" data-i18n="account.sessions">Активные сессии</p>
+            <div class="account-members" data-sessions></div>
+          </section>
         </div>
+      </div>
+    </dialog>
+
+    <dialog id="notifications-dialog" class="dialog" aria-labelledby="notifications-title">
+      <div class="dialog__content notification-center">
+        <div class="dialog__header">
+          <div><p class="eyebrow">FLOWBOARD / INBOX</p><h2 id="notifications-title" data-i18n="notifications.title">Центр уведомлений</h2></div>
+          <button class="icon-button" type="button" data-action="close-notifications" data-i18n-aria="hub.close" aria-label="Закрыть">×</button>
+        </div>
+        <div class="hub-actions">
+          <select id="notification-filter" aria-label="Фильтр уведомлений">
+            <option value="" data-i18n="notifications.all">Все</option>
+            <option value="mention" data-i18n="notifications.mentions">Упоминания</option>
+            <option value="comment" data-i18n="notifications.comments">Комментарии</option>
+            <option value="sync" data-i18n="notifications.sync">Синхронизация</option>
+          </select>
+          <button class="secondary-button" type="button" data-action="read-all-notifications" data-i18n="notifications.readAll">Прочитать все</button>
+        </div>
+        <div class="notification-list" data-notification-list></div>
       </div>
     </dialog>
 
@@ -586,6 +656,18 @@
             <h3 data-i18n="hub.workflow">Колонки доски</h3>
             <div class="workflow-editor" data-workflow-editor></div>
             <button class="secondary-button" type="button" data-action="add-column" data-i18n="hub.addColumn">+ Колонка</button>
+          </section>
+
+          <section class="hub-card hub-card--wide">
+            <p class="eyebrow" data-i18n="planning.label">Планирование</p>
+            <h3 data-i18n="planning.goals">Цели и дорожная карта</h3>
+            <div class="inline-field">
+              <input id="goal-title" type="text" maxlength="100" data-i18n-placeholder="planning.goalPlaceholder" placeholder="Название цели" />
+              <input id="goal-date" type="date" />
+              <button class="primary-button" type="button" data-action="create-goal" data-i18n="planning.addGoal">+ Цель</button>
+            </div>
+            <div class="goal-list" data-goal-list></div>
+            <div class="roadmap" data-roadmap></div>
           </section>
 
           <section class="hub-card">

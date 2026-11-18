@@ -48,12 +48,23 @@ class Comment(ApiModel):
     parent_id: str | None = Field(default=None, alias="parentId")
     created_at: str = Field(default_factory=utc_now, alias="createdAt")
     edited_at: str | None = Field(default=None, alias="editedAt")
+    resolved_at: str | None = Field(default=None, alias="resolvedAt")
+    reactions: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class CommentCreate(ApiModel):
     id: str | None = None
     text: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
     parent_id: str | None = Field(default=None, alias="parentId")
+
+
+class CommentUpdate(ApiModel):
+    text: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)] | None = None
+    resolved: bool | None = None
+
+
+class CommentReaction(ApiModel):
+    emoji: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=16)]
 
 
 class CommentOut(Comment):
@@ -89,6 +100,9 @@ class TaskFields(ApiModel):
     estimated_minutes: int = Field(default=0, alias="estimatedMinutes", ge=0, le=100_000)
     time_spent_seconds: int = Field(default=0, alias="timeSpentSeconds", ge=0)
     timer_started_at: str = Field(default="", alias="timerStartedAt")
+    start_date: str = Field(default="", alias="startDate")
+    goal_id: str = Field(default="", alias="goalId")
+    milestone: bool = False
 
     @field_validator("tags")
     @classmethod
@@ -123,6 +137,9 @@ class TaskUpdate(ApiModel):
     time_spent_seconds: int | None = Field(default=None, alias="timeSpentSeconds", ge=0)
     timer_started_at: str | None = Field(default=None, alias="timerStartedAt")
     completed_at: str | None = Field(default=None, alias="completedAt")
+    start_date: str | None = Field(default=None, alias="startDate")
+    goal_id: str | None = Field(default=None, alias="goalId")
+    milestone: bool | None = None
 
     @field_validator("tags")
     @classmethod
@@ -208,6 +225,45 @@ class LoginRequest(ApiModel):
     password: str
 
 
+class InvitationCreate(ApiModel):
+    email: Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True, min_length=3, max_length=254)]
+    role: Literal["editor", "viewer"] = "editor"
+
+
+class InvitationOut(ApiModel):
+    id: str
+    email: str
+    role: Literal["editor", "viewer"]
+    token: str | None = None
+    expires_at: str = Field(alias="expiresAt")
+    accepted_at: str | None = Field(default=None, alias="acceptedAt")
+    created_at: str = Field(alias="createdAt")
+
+
+class InvitationAccept(ApiModel):
+    token: str
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)]
+    password: Annotated[str, StringConstraints(min_length=8, max_length=128)]
+
+
+class PasswordResetRequest(ApiModel):
+    email: Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True, min_length=3, max_length=254)]
+
+
+class PasswordResetConfirm(ApiModel):
+    token: str
+    password: Annotated[str, StringConstraints(min_length=8, max_length=128)]
+
+
+class SessionOut(ApiModel):
+    id: str
+    user_agent: str = Field(alias="userAgent")
+    ip_address: str = Field(alias="ipAddress")
+    created_at: str = Field(alias="createdAt")
+    last_seen_at: str = Field(alias="lastSeenAt")
+    current: bool = False
+
+
 class UserOut(ApiModel):
     id: str
     email: str
@@ -262,6 +318,34 @@ class NotificationPreferences(ApiModel):
     in_app_enabled: bool = Field(default=True, alias="inAppEnabled")
     push_enabled: bool = Field(default=True, alias="pushEnabled")
     email_enabled: bool = Field(default=False, alias="emailEnabled")
+
+
+class GoalCreate(ApiModel):
+    title: Name
+    description: Annotated[str, StringConstraints(max_length=500)] = ""
+    target_date: str = Field(default="", alias="targetDate")
+    color: str = "lime"
+
+
+class GoalOut(GoalCreate):
+    id: str
+    progress: int = Field(default=0, ge=0, le=100)
+    task_count: int = Field(default=0, alias="taskCount")
+    completed_count: int = Field(default=0, alias="completedCount")
+    created_at: str = Field(alias="createdAt")
+
+
+class WatcherUpdate(ApiModel):
+    watching: bool = True
+
+
+class JobOut(ApiModel):
+    id: str
+    kind: str
+    status: Literal["pending", "running", "done", "failed"]
+    attempts: int
+    last_error: str | None = Field(default=None, alias="lastError")
+    created_at: str = Field(alias="createdAt")
 
 
 class WebhookCreate(ApiModel):

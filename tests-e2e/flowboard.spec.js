@@ -71,6 +71,27 @@ test("центр продуктивности, колонки, шаблоны и
   await expect(page.locator("[data-calendar-grid]")).toContainText("Проверить релиз");
 });
 
+test("создаёт цель, контрольную точку и показывает её на дорожной карте", async ({ page }) => {
+  await page.locator('[data-action="open-productivity-hub"]').click();
+  await page.locator("#goal-title").fill("Запуск продукта");
+  await page.locator("#goal-date").fill("2030-06-01");
+  await page.locator('[data-action="create-goal"]').click();
+  await expect(page.locator("[data-goal-list]")).toContainText("Запуск продукта");
+  await page.locator('[data-action="close-productivity-hub"]').click();
+
+  await page.locator('[data-action="open-task-dialog"]').click();
+  await page.locator("#task-title").fill("Публичный релиз");
+  await page.locator("#task-start-date").fill("2030-05-01");
+  await page.locator("#task-deadline").fill("2030-06-01");
+  await page.locator("#task-goal").selectOption({ label: "Запуск продукта" });
+  await page.locator("#task-milestone").check();
+  await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+
+  await page.locator('[data-action="open-productivity-hub"]').click();
+  await expect(page.locator("[data-roadmap]")).toContainText("Публичный релиз");
+  await expect(page.locator("[data-roadmap]")).toContainText("◆");
+});
+
 test("темы, сортировка и клавиатурные команды", async ({ page }) => {
   await page.locator("#theme-select").selectOption("dark");
   await expect(page.locator("body")).toHaveAttribute("data-theme", "dark");

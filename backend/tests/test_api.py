@@ -287,3 +287,117 @@ def test_postgres_sql_compatibility_helpers() -> None:
     )
     assert "BYTEA" in adapt_postgres_schema("CREATE TABLE files(content BLOB NOT NULL)")
 
+
+def test_invitations_password_reset_and_session_management(client: TestClient) -> None:
+    owner = register_user(client, "security-owner@example.com", "Security Owner")
+    headers = auth_headers(owner["accessToken"])
+    invitation = client.post(
+        "/api/v1/invitations", headers=headers,
+        json={"email": "invitee@example.com", "role": "viewer"},
+    )
+    assert invitation.status_code == 201
+    assert invitation.json()["token"]
+    accepted = client.post(
+        "/api/v1/auth/invitations/accept",
+        json={"token": invitation.json()["token"], "name": "Invitee", "password": "invited-password"},
+    )
+    assert accepted.status_code == 200
+    assert accepted.json()["user"]["role"] == "viewer"
+
+    sessions = client.get("/api/v1/auth/sessions", headers=headers).json()
+    assert sessions[0]["current"] is True
+    assert client.delete(f"/api/v1/auth/sessions/{sessions[0]['id']}", headers=headers).status_code == 204
+    assert client.get("/api/v1/auth/me", headers=headers).status_code == 401
+
+    reset = client.post(
+        "/api/v1/auth/password-reset/request", json={"email": "invitee@example.com"}
+    ).json()
+    assert reset["resetToken"]
+    confirmed = client.post(
+        "/api/v1/auth/password-reset/confirm",
+        json={"token": reset["resetToken"], "password": "new-invited-password"},
+    )
+    assert confirmed.json()["reset"] is True
+    assert client.post(
+        "/api/v1/auth/login",
+        json={"email": "invitee@example.com", "password": "new-invited-password"},
+    ).status_code == 200
+
+
+def test_discussion_reactions_resolution_and_watchers(client: TestClient) -> None:
+    owner = register_user(client, "thread-owner@example.com", "Owner")
+    watcher = register_user(client, "thread-watcher@example.com", "Watcher")
+    task = client.post("/api/v1/tasks", json={"title": "Threaded discussion"}).json()
+    watcher_headers = auth_headers(watcher["accessToken"])
+    owner_headers = auth_headers(owner["accessToken"])
+    assert client.put(
+        f"/api/v1/tasks/{task['id']}/watchers/me", headers=watcher_headers, json={"watching": True}
+    ).json()["watching"] is True
+    root = client.post(
+        f"/api/v1/tasks/{task['id']}/comments", headers=owner_headers, json={"text": "Please review"}
+    ).json()
+    reply = client.post(
+        f"/api/v1/tasks/{task['id']}/comments", headers=watcher_headers,
+        json={"text": "Done", "parentId": root["id"]},
+    )
+    assert reply.json()["parentId"] == root["id"]
+    reacted = client.post(
+        f"/api/v1/comments/{root['id']}/reactions", headers=watcher_headers, json={"emoji": "👍"}
+    ).json()
+    assert reacted["reactions"]["👍"] == [watcher["user"]["id"]]
+    resolved = client.patch(
+        f"/api/v1/comments/{root['id']}", headers=owner_headers, json={"resolved": True}
+    ).json()
+    assert resolved["resolvedAt"]
+    embedded = client.get(f"/api/v1/tasks/{task['id']}").json()["comments"]
+    assert embedded[0]["resolvedAt"]
+    assert embedded[0]["reactions"]["👍"] == [watcher["user"]["id"]]
+    assert client.delete(
+        f"/api/v1/comments/{reply.json()['id']}", headers=watcher_headers
+    ).status_code == 204
+    assert client.get("/api/v1/notifications", headers=watcher_headers).json()[0]["kind"] == "comment"
+
+
+def test_goals_timeline_workload_and_advanced_search(client: TestClient) -> None:
+    goal = client.post(
+        "/api/v1/goals", json={"title": "Launch", "targetDate": "2030-06-01", "color": "pink"}
+    ).json()
+    task = client.post(
+        "/api/v1/tasks",
+        json={
+            "title": "Ship release", "goalId": goal["id"], "startDate": "2030-05-01",
+            "deadline": "2030-05-20", "assignee": "Ada", "estimatedMinutes": 120,
+        },
+    ).json()
+    assert client.patch(f"/api/v1/tasks/{task['id']}", json={"status": "done"}).status_code == 200
+    goals = client.get("/api/v1/goals").json()
+    assert goals[0]["progress"] == 100
+    assert client.get("/api/v1/planning/timeline").json()["tasks"][0]["goalId"] == goal["id"]
+    assert client.get("/api/v1/planning/workload").json()[0]["estimatedMinutes"] == 120
+    found = client.get(
+        "/api/v1/search/tasks",
+        params={"q": "release", "deadlineFrom": "2030-05-01", "deadlineTo": "2030-05-31"},
+    ).json()
+    assert found[0]["id"] == task["id"]
+
+
+def test_external_attachment_storage(tmp_path: Path) -> None:
+    settings = Settings(
+        database_path=tmp_path / "object-test.db",
+        cors_origins=("http://localhost",),
+        object_storage_path=tmp_path / "objects",
+    )
+    with TestClient(create_app(settings)) as test_client:
+        task = test_client.post("/api/v1/tasks", json={"title": "Object file"}).json()
+        uploaded = test_client.post(
+            f"/api/v1/tasks/{task['id']}/attachments",
+            files={"file": ("safe.txt", b"stored outside database", "text/plain")},
+        ).json()
+        assert test_client.get(uploaded["url"]).content == b"stored outside database"
+        assert any((tmp_path / "objects").rglob(uploaded["id"]))
+        blocked = test_client.post(
+            f"/api/v1/tasks/{task['id']}/attachments",
+            files={"file": ("payload.svg", b"<svg></svg>", "image/svg+xml")},
+        )
+        assert blocked.status_code == 415
+
