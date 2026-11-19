@@ -1,11 +1,15 @@
-const CACHE_NAME = "flowboard-v11";
+const CACHE_NAME = "flowboard-v12";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./manifest.webmanifest",
+  "./favicon.ico?v=2",
   "./assets/icons/flowboard-mark.svg?v=1",
-  "./assets/icons/flowboard-mark-192.png?v=1",
-  "./assets/icons/flowboard-mark-512.png?v=1",
+  "./assets/icons/favicon-16.png?v=2",
+  "./assets/icons/favicon-32.png?v=2",
+  "./assets/icons/safari-pinned-tab.svg?v=2",
+  "./assets/icons/flowboard-mark-192.png?v=2",
+  "./assets/icons/flowboard-mark-512.png?v=2",
   "./css/style.css?v=9",
   "./css/base.css?v=9",
   "./css/components.css?v=9",
