@@ -38,6 +38,43 @@ async def send_email(settings: Settings, recipient: str, subject: str, body: str
     if not settings.smtp_host:
         return False
 
+
+async def send_push(repository: Repository, settings: Settings, payload: dict) -> int:
+    if not settings.vapid_private_key:
+        return 0
+    try:
+        from pywebpush import webpush
+    except ImportError as error:
+        raise RuntimeError("Push support is not installed") from error
+    with repository.database._lock, repository.database.connect() as connection:
+        rows = connection.execute(
+            "SELECT * FROM push_subscriptions WHERE user_id=?", (payload["userId"],)
+        ).fetchall()
+
+    def deliver(row) -> None:
+        webpush(
+            subscription_info={
+                "endpoint": row["endpoint"],
+                "keys": {"p256dh": row["p256dh"], "auth": row["auth"]},
+            },
+            data=json.dumps({
+                "title": payload.get("title", "Flowboard"),
+                "body": payload.get("body", "You have a new notification"),
+                "url": payload.get("url", "/"),
+            }),
+            vapid_private_key=settings.vapid_private_key,
+            vapid_claims={"sub": f"mailto:{settings.smtp_from}"},
+        )
+
+    delivered = 0
+    for row in rows:
+        try:
+            await to_thread(deliver, row)
+            delivered += 1
+        except Exception:
+            continue
+    return delivered
+
     def deliver() -> None:
         message = EmailMessage()
         message["From"] = settings.smtp_from
@@ -73,6 +110,8 @@ async def process_jobs(repository: Repository, settings: Settings, limit: int = 
                 )
                 if settings.smtp_host and not delivered:
                     raise RuntimeError("Email delivery failed")
+            elif job["kind"] == "push.send":
+                await send_push(repository, settings, job["payload"])
             repository.finish_job(job["id"])
             completed += 1
         except Exception as error:

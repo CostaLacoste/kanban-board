@@ -103,6 +103,7 @@ class TaskFields(ApiModel):
     start_date: str = Field(default="", alias="startDate")
     goal_id: str = Field(default="", alias="goalId")
     milestone: bool = False
+    custom_values: dict[str, Any] = Field(default_factory=dict, alias="customValues")
 
     @field_validator("tags")
     @classmethod
@@ -140,6 +141,7 @@ class TaskUpdate(ApiModel):
     start_date: str | None = Field(default=None, alias="startDate")
     goal_id: str | None = Field(default=None, alias="goalId")
     milestone: bool | None = None
+    custom_values: dict[str, Any] | None = Field(default=None, alias="customValues")
 
     @field_validator("tags")
     @classmethod
@@ -223,6 +225,7 @@ class RegisterRequest(ApiModel):
 class LoginRequest(ApiModel):
     email: Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True, min_length=3, max_length=254)]
     password: str
+    otp: str | None = None
 
 
 class InvitationCreate(ApiModel):

@@ -7,6 +7,10 @@ local-first режим, JWT, роли, комментарии и упомина�
 Дополнительно реализованы приглашения, сброс пароля, управление сессиями,
 ветки обсуждений и реакции, наблюдатели, цели и roadmap, persistent job queue,
 межпроцессная realtime-шина и внешнее файловое хранилище.
+Платформенный слой добавляет несколько рабочих пространств, досочные права,
+TOTP и Passkeys, подтверждение email, аудит, Web Push, интеграции, iCalendar,
+пользовательские поля, публичные формы, журнал совместных операций и локального
+умного помощника без отправки данных стороннему AI-провайдеру.
 
 ## Запуск
 
@@ -34,6 +38,13 @@ uv run fastapi dev app/main.py
 - `GET/DELETE /api/v1/attachments/{id}`;
 - `GET/PUT /api/v1/automations`;
 - `GET/PUT /api/v1/workspace`;
+- `GET/POST /api/v1/workspaces` и `GET/PUT /workspaces/{id}/snapshot`;
+- `GET /api/v1/my/tasks` и права `/workspaces/{id}/boards/{boardId}/permissions`;
+- `/api/v1/security/*` — TOTP, Passkeys и подтверждение email;
+- `GET /api/v1/workspaces/{id}/audit`;
+- `/api/v1/push/*`, `/api/v1/integrations` и GitHub webhook;
+- `/api/v1/custom-fields`, `/api/v1/public-shares` и `/api/v1/public/{token}`;
+- `/api/v1/collaboration/operations` и `/api/v1/assistant`;
 - `POST /api/v1/auth/register|login` и `GET /api/v1/auth/me`;
 - `GET/PUT /api/v1/members` и управление API-токенами;
 - `GET/POST /api/v1/invitations` и `GET/DELETE /api/v1/auth/sessions`;
@@ -85,6 +96,9 @@ Compose запускает отдельный PostgreSQL 17 и ожидает е
 напрямую. Для ссылок в письмах задайте `FLOWBOARD_PUBLIC_APP_URL`, а для
 доставки писем — `FLOWBOARD_SMTP_HOST`, `FLOWBOARD_SMTP_PORT`,
 `FLOWBOARD_SMTP_USERNAME`, `FLOWBOARD_SMTP_PASSWORD` и `FLOWBOARD_SMTP_FROM`.
+Для Passkeys укажите `FLOWBOARD_WEBAUTHN_RP_ID` и
+`FLOWBOARD_WEBAUTHN_ORIGIN`. Для push-уведомлений нужны
+`FLOWBOARD_VAPID_PUBLIC_KEY` и `FLOWBOARD_VAPID_PRIVATE_KEY`.
 
 ## Перенос SQLite в PostgreSQL
 

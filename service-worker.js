@@ -1,4 +1,4 @@
-const CACHE_NAME = "flowboard-v10";
+const CACHE_NAME = "flowboard-v11";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -51,4 +51,17 @@ self.addEventListener("fetch", (event) => {
       })
       .catch(() => caches.match(event.request).then((cached) => cached || caches.match("./index.html"))),
   );
+});
+
+self.addEventListener("push", (event) => {
+  const payload = event.data?.json?.() ?? { title: "Flowboard", body: event.data?.text?.() ?? "" };
+  event.waitUntil(self.registration.showNotification(payload.title || "Flowboard", {
+    body: payload.body || "",
+    data: { url: payload.url || "./" },
+  }));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil(clients.openWindow(event.notification.data?.url || "./"));
 });

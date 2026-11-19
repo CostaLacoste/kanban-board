@@ -12,16 +12,18 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from .auth import Actor, AuthService
 from .config import Settings
+from .platform import PlatformService
 
 
 logger = logging.getLogger("flowboard.api")
 
 
 class ApiMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, auth: AuthService, settings: Settings) -> None:
+    def __init__(self, app, auth: AuthService, settings: Settings, platform: PlatformService) -> None:
         super().__init__(app)
         self.auth = auth
         self.settings = settings
+        self.platform = platform
         self.hits: dict[str, deque[float]] = defaultdict(deque)
 
     async def dispatch(self, request: Request, call_next):
@@ -34,7 +36,13 @@ class ApiMiddleware(BaseHTTPMiddleware):
         actor = self.auth.authenticate(token) or Actor.guest()
         request.state.actor = actor
         path = request.url.path
-        public = path.endswith("/health") or "/auth/" in path or not path.startswith("/api/")
+        public = (
+            path.endswith("/health")
+            or "/auth/" in path
+            or path.startswith("/api/v1/public/")
+            or path.startswith("/api/v1/integrations/github/webhook/")
+            or not path.startswith("/api/")
+        )
         if self.settings.auth_required and not public and not actor.authenticated:
             return JSONResponse({"detail": "Authentication required"}, status_code=401)
         viewer_self_service = (
@@ -65,6 +73,24 @@ class ApiMiddleware(BaseHTTPMiddleware):
         metrics["requests"] += 1
         metrics["duration"] += duration
         metrics["statuses"][str(response.status_code)] += 1
+        if (
+            actor.authenticated
+            and request.method not in {"GET", "HEAD", "OPTIONS"}
+            and response.status_code < 400
+        ):
+            forwarded = request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
+            workspace_id = getattr(request.state, "audit_workspace_id", None) or request.headers.get("x-workspace-id")
+            if not workspace_id and path.startswith("/api/v1/workspaces/"):
+                workspace_id = path.split("/", 5)[4]
+            self.platform.audit(
+                workspace_id,
+                actor.id,
+                request.method.lower(),
+                path,
+                request_id,
+                forwarded or (request.client.host if request.client else "unknown"),
+                {"status": response.status_code},
+            )
         logger.info(json.dumps({
             "requestId": request_id, "traceId": trace_id, "method": request.method, "path": path,
             "status": response.status_code, "actor": actor.id,

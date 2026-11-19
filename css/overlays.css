@@ -246,6 +246,53 @@
   box-shadow: var(--shadow-card);
 }
 
+.platform-console {
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.platform-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.platform-grid .hub-card {
+  min-width: 0;
+}
+
+.platform-output,
+[data-share-result] {
+  display: block;
+  min-height: 3rem;
+  padding: 0.75rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--color-surface-muted);
+  border: 2px solid var(--color-border);
+}
+
+.security-status {
+  margin-bottom: 0.75rem;
+  font-weight: 800;
+}
+
+.audit-list {
+  max-height: 16rem;
+  overflow-y: auto;
+}
+
+@media (max-width: 720px) {
+  .platform-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .platform-grid .hub-card--wide {
+    grid-column: auto;
+  }
+}
+
 @keyframes notification-in {
   from {
     opacity: 0;

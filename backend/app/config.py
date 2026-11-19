@@ -27,6 +27,10 @@ class Settings:
     smtp_from: str = "Flowboard <noreply@flowboard.local>"
     object_storage_path: Path | None = None
     public_app_url: str = "http://localhost:4173"
+    webauthn_rp_id: str = "localhost"
+    webauthn_origin: str = "http://localhost:4173"
+    vapid_public_key: str = ""
+    vapid_private_key: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -56,5 +60,9 @@ class Settings:
                 if os.getenv("FLOWBOARD_OBJECT_STORAGE_PATH") else None
             ),
             public_app_url=os.getenv("FLOWBOARD_PUBLIC_APP_URL", "http://localhost:4173").rstrip("/"),
+            webauthn_rp_id=os.getenv("FLOWBOARD_WEBAUTHN_RP_ID", "localhost"),
+            webauthn_origin=os.getenv("FLOWBOARD_WEBAUTHN_ORIGIN", os.getenv("FLOWBOARD_PUBLIC_APP_URL", "http://localhost:4173")).rstrip("/"),
+            vapid_public_key=os.getenv("FLOWBOARD_VAPID_PUBLIC_KEY", ""),
+            vapid_private_key=os.getenv("FLOWBOARD_VAPID_PRIVATE_KEY", ""),
         )
 

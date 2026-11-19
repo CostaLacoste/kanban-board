@@ -296,3 +296,12 @@ test("показывает комментарии и упоминания в з�
   await expect(page.locator("[data-comment-list]")).toContainText("@Анна");
   await expect(page.locator("[data-comment-list] mark")).toHaveText("@Анна");
 });
+
+test("открывает платформенную консоль и переводит её", async ({ page }) => {
+  await page.locator('[data-action="open-platform"]').click();
+  await expect(page.locator("#platform-title")).toHaveText("Командная платформа");
+  await expect(page.locator("[data-platform-status]")).toHaveText("Войдите в аккаунт");
+  await page.locator("#language-select").selectOption("uk");
+  await expect(page.locator("#platform-title")).toHaveText("Командна платформа");
+  await expect(page.locator('[data-action="create-workspace"]')).toHaveText("Створити");
+});

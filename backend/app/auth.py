@@ -5,6 +5,8 @@ import hashlib
 import hmac
 import json
 import secrets
+import struct
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -36,6 +38,21 @@ def verify_password(password: str, encoded: str) -> bool:
         return hmac.compare_digest(_b64(digest), expected)
     except (TypeError, ValueError):
         return False
+
+
+def verify_totp_code(secret: str, code: str) -> bool:
+    try:
+        key = base64.b32decode(secret + "=" * (-len(secret) % 8))
+        for drift in (-1, 0, 1):
+            counter = int(time.time() / 30) + drift
+            digest = hmac.new(key, struct.pack(">Q", counter), hashlib.sha1).digest()
+            offset = digest[-1] & 0x0F
+            value = (struct.unpack(">I", digest[offset:offset + 4])[0] & 0x7FFFFFFF) % 1_000_000
+            if hmac.compare_digest(f"{value:06d}", code):
+                return True
+    except (ValueError, TypeError):
+        return False
+    return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +132,14 @@ class AuthService:
                 (data.email,),
             ).fetchone()
         if row is None or not verify_password(data.password, row["password_hash"]):
+            return None
+        with self.database._lock, self.database.connect() as connection:
+            security = connection.execute(
+                "SELECT totp_secret,totp_enabled FROM user_security WHERE user_id=?", (row["id"],)
+            ).fetchone()
+        if security and security["totp_enabled"] and (
+            not data.otp or not verify_totp_code(security["totp_secret"], data.otp)
+        ):
             return None
         return self._user_dict(row), self.issue_token(row["id"], user_agent, ip_address)
 

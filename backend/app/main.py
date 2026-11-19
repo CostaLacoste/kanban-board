@@ -66,6 +66,8 @@ from .models import (
 from .repository import Repository
 from .realtime import RealtimeManager
 from .storage import LocalObjectStorage
+from .platform import PlatformService
+from .platform_routes import create_platform_router
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -75,6 +77,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     auth = AuthService(database, config)
     realtime = RealtimeManager(repository)
     object_storage = LocalObjectStorage(config.object_storage_path)
+    platform = PlatformService(database, repository, config)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -108,6 +111,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.auth = auth
     app.state.realtime = realtime
     app.state.object_storage = object_storage
+    app.state.platform = platform
     app.state.metrics = {"requests": 0, "duration": 0.0, "statuses": Counter()}
     app.add_middleware(
         CORSMiddleware,
@@ -116,7 +120,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.add_middleware(ApiMiddleware, auth=auth, settings=config)
+    app.add_middleware(ApiMiddleware, auth=auth, settings=config, platform=platform)
 
     router = APIRouter(prefix="/api/v1")
 
@@ -697,6 +701,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return repository.get_workspace()
 
     app.include_router(router)
+    app.include_router(create_platform_router(platform, auth, config))
 
     @app.websocket("/api/v1/realtime")
     async def realtime_socket(
@@ -739,6 +744,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "value": value,
                         "actor": {"id": actor.id, "name": actor.name},
                     }, exclude=websocket)
+                elif message_type in {"task.operation", "cursor"} and session.role != "viewer":
+                    workspace_id = str(message.get("workspaceId") or "") or None
+                    task_id = str(message.get("taskId") or "")[:100]
+                    if message_type == "task.operation" and task_id:
+                        operation = platform.add_operation(
+                            workspace_id,
+                            task_id,
+                            client_id[:100],
+                            actor.id if actor.authenticated else None,
+                            str(message.get("field") or "description")[:50],
+                            message.get("operation") if isinstance(message.get("operation"), dict) else {},
+                            max(0, int(message.get("lamport") or 0)),
+                        )
+                        await realtime.publish({"type": "task.operation", **operation}, exclude=websocket)
+                    elif task_id:
+                        await realtime.publish({
+                            "type": "cursor", "taskId": task_id,
+                            "field": str(message.get("field") or "")[:50],
+                            "offset": max(0, int(message.get("offset") or 0)),
+                            "actor": {"id": actor.id, "name": actor.name},
+                        }, exclude=websocket)
         except WebSocketDisconnect:
             await realtime.disconnect(websocket)
 

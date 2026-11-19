@@ -100,6 +100,9 @@ function normalizeTaskData(taskData) {
     startDate: String(taskData.startDate || ""),
     goalId: String(taskData.goalId || ""),
     milestone: Boolean(taskData.milestone),
+    customValues: taskData.customValues && typeof taskData.customValues === "object"
+      ? Object.fromEntries(Object.entries(taskData.customValues).slice(0, 50))
+      : {},
   };
 }
 

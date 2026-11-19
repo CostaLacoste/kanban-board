@@ -3,6 +3,7 @@ const API_TOKEN_KEY = "flowboard-api-token";
 const SYNC_QUEUE_KEY = "flowboard-api-sync-queue";
 const REVISION_KEY = "flowboard-api-revision";
 const CLIENT_ID_KEY = "flowboard-api-client-id";
+const ACTIVE_WORKSPACE_KEY = "flowboard-active-workspace";
 
 let syncTimer = null;
 let socket = null;
@@ -49,6 +50,15 @@ function headers(extra = {}) {
   };
 }
 
+export function getActiveWorkspaceId() {
+  return storageGet(ACTIVE_WORKSPACE_KEY);
+}
+
+export function setActiveWorkspaceId(workspaceId) {
+  workspaceId ? storageSet(ACTIVE_WORKSPACE_KEY, workspaceId) : storageRemove(ACTIVE_WORKSPACE_KEY);
+  storageSet(REVISION_KEY, "0");
+}
+
 async function apiRequest(path, options = {}) {
   const base = getApiBaseUrl();
   if (!base) throw new Error("API disabled");
@@ -78,6 +88,117 @@ export function registerAccount(payload) {
 
 export function loginAccount(payload) {
   return authenticate("/auth/login", payload);
+}
+
+export function listCloudWorkspaces() { return apiRequest("/workspaces"); }
+export function createCloudWorkspace(name) {
+  return apiRequest("/workspaces", { method: "POST", body: JSON.stringify({ name }) });
+}
+export function getMyTasks() { return apiRequest("/my/tasks"); }
+export function getSecurityStatus() { return apiRequest("/security/status"); }
+export function setupTotp() { return apiRequest("/security/totp/setup", { method: "POST" }); }
+export function enableTotp(code) {
+  return apiRequest("/security/totp/enable", { method: "POST", body: JSON.stringify({ code }) });
+}
+export function sendEmailVerification() {
+  return apiRequest("/security/email/send-verification", { method: "POST" });
+}
+export function listIntegrations(workspaceId) {
+  return apiRequest(`/integrations?workspaceId=${encodeURIComponent(workspaceId)}`);
+}
+export function createIntegration(payload) {
+  return apiRequest("/integrations", { method: "POST", body: JSON.stringify(payload) });
+}
+export function testIntegration(integrationId, text = "Flowboard integration connected") {
+  return apiRequest(`/integrations/${encodeURIComponent(integrationId)}/test`, {
+    method: "POST", body: JSON.stringify({ text }),
+  });
+}
+export function listCustomFields(workspaceId) {
+  return apiRequest(`/custom-fields?workspaceId=${encodeURIComponent(workspaceId)}`);
+}
+export function createCustomField(payload) {
+  return apiRequest("/custom-fields", { method: "POST", body: JSON.stringify(payload) });
+}
+export function createPublicShare(payload) {
+  return apiRequest("/public-shares", { method: "POST", body: JSON.stringify(payload) });
+}
+export function runAssistant(payload) {
+  return apiRequest("/assistant", { method: "POST", body: JSON.stringify(payload) });
+}
+export function getAuditLog(workspaceId) {
+  return apiRequest(`/workspaces/${encodeURIComponent(workspaceId)}/audit`);
+}
+
+function decodeBase64Url(value) {
+  const binary = atob(String(value).replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(value.length / 4) * 4, "="));
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+function encodeBase64Url(value) {
+  const bytes = new Uint8Array(value);
+  let binary = "";
+  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function preparePublicKey(options) {
+  return {
+    ...options,
+    challenge: decodeBase64Url(options.challenge),
+    ...(options.user ? { user: { ...options.user, id: decodeBase64Url(options.user.id) } } : {}),
+    ...(options.allowCredentials ? { allowCredentials: options.allowCredentials.map((item) => ({ ...item, id: decodeBase64Url(item.id) })) } : {}),
+    ...(options.excludeCredentials ? { excludeCredentials: options.excludeCredentials.map((item) => ({ ...item, id: decodeBase64Url(item.id) })) } : {}),
+  };
+}
+
+function serializeCredential(credential) {
+  const response = credential.response;
+  return {
+    id: credential.id,
+    rawId: encodeBase64Url(credential.rawId),
+    type: credential.type,
+    authenticatorAttachment: credential.authenticatorAttachment,
+    clientExtensionResults: credential.getClientExtensionResults(),
+    response: {
+      clientDataJSON: encodeBase64Url(response.clientDataJSON),
+      ...(response.attestationObject ? { attestationObject: encodeBase64Url(response.attestationObject) } : {}),
+      ...(response.authenticatorData ? { authenticatorData: encodeBase64Url(response.authenticatorData) } : {}),
+      ...(response.signature ? { signature: encodeBase64Url(response.signature) } : {}),
+      ...(response.userHandle ? { userHandle: encodeBase64Url(response.userHandle) } : {}),
+      ...(response.getTransports ? { transports: response.getTransports() } : {}),
+    },
+  };
+}
+
+export async function registerPasskey(deviceName = "Passkey") {
+  if (!navigator.credentials) throw new Error("WebAuthn is not supported");
+  const start = await apiRequest("/security/passkeys/registration/start", { method: "POST" });
+  const credential = await navigator.credentials.create({ publicKey: preparePublicKey(start.publicKey) });
+  return apiRequest("/security/passkeys/registration/complete", {
+    method: "POST",
+    body: JSON.stringify({ challengeId: start.challengeId, credential: serializeCredential(credential), deviceName }),
+  });
+}
+
+export async function loginWithPasskey(email) {
+  if (!navigator.credentials) throw new Error("WebAuthn is not supported");
+  const start = await apiRequest("/auth/passkeys/start", { method: "POST", body: JSON.stringify({ email }) });
+  const credential = await navigator.credentials.get({ publicKey: preparePublicKey(start.publicKey) });
+  return authenticate("/auth/passkeys/complete", {
+    challengeId: start.challengeId, credential: serializeCredential(credential),
+  });
+}
+
+export async function enablePushNotifications(registration) {
+  const { publicKey } = await apiRequest("/push/public-key");
+  if (!publicKey) throw new Error("VAPID key is not configured");
+  const subscription = await registration.pushManager.subscribe({
+    userVisibleOnly: true, applicationServerKey: decodeBase64Url(publicKey),
+  });
+  return apiRequest("/push/subscriptions", {
+    method: "POST", body: JSON.stringify(subscription.toJSON()),
+  });
 }
 
 export async function getCurrentAccount() {
@@ -197,7 +318,9 @@ export async function createTaskComment(taskId, comment) {
 
 export async function loadRemoteWorkspace() {
   try {
-    const workspace = await apiRequest("/workspace");
+    const workspaceId = getActiveWorkspaceId();
+    const path = workspaceId ? `/workspaces/${encodeURIComponent(workspaceId)}/snapshot` : "/workspace";
+    const workspace = await apiRequest(path);
     storageSet(REVISION_KEY, String(workspace.revision || 0));
     return workspace;
   } catch {
@@ -242,26 +365,29 @@ export async function syncWorkspace(workspace) {
   storageSet(SYNC_QUEUE_KEY, JSON.stringify(workspace));
   let revision = getRemoteRevision();
   let payload = { ...workspace, revision };
+  const workspaceId = getActiveWorkspaceId();
+  const path = workspaceId ? `/workspaces/${encodeURIComponent(workspaceId)}/snapshot` : "/workspace";
+  const workspaceHeaders = workspaceId ? { "X-Workspace-ID": workspaceId } : {};
   try {
     let remote;
     try {
-      remote = await apiRequest("/workspace", {
+      remote = await apiRequest(path, {
         method: "PUT",
-        headers: { "If-Match": `"${revision}"` },
+        headers: { "If-Match": `"${revision}"`, ...workspaceHeaders },
         body: JSON.stringify(payload),
       });
     } catch (error) {
       if (error.status !== 409) throw error;
-      const current = await apiRequest("/workspace");
+      const current = await apiRequest(path);
       payload = mergeWorkspaceForConflict(workspace, current);
       revision = current.revision || 0;
-      remote = await apiRequest("/workspace", {
+      remote = await apiRequest(path, {
         method: "PUT",
-        headers: { "If-Match": `"${revision}"` },
+        headers: { "If-Match": `"${revision}"`, ...workspaceHeaders },
         body: JSON.stringify(payload),
       });
     }
-    await uploadMissingAttachments(workspace, remote);
+    if (!workspaceId) await uploadMissingAttachments(workspace, remote);
     storageSet(REVISION_KEY, String(remote.revision || 0));
     if (typeof localStorage !== "undefined") localStorage.removeItem(SYNC_QUEUE_KEY);
     return remote;
@@ -307,6 +433,8 @@ export function connectRealtime(onUpdate, onEvent = () => {}) {
   socket?.close();
   const params = new URLSearchParams({ clientId });
   if (token) params.set("token", token);
+  const workspaceId = getActiveWorkspaceId();
+  if (workspaceId) params.set("workspaceId", workspaceId);
   let stopped = false;
   let reconnectTimer = null;
   let attempts = 0;

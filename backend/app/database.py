@@ -292,6 +292,144 @@ class Database:
                 );
                 CREATE INDEX IF NOT EXISTS realtime_events_created_idx
                     ON realtime_events(created_at);
+                CREATE TABLE IF NOT EXISTS workspaces (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    slug TEXT NOT NULL UNIQUE,
+                    created_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS workspace_user_roles (
+                    workspace_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    role TEXT NOT NULL CHECK(role IN ('owner','editor','viewer','guest')),
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (workspace_id,user_id),
+                    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS workspace_snapshots (
+                    workspace_id TEXT PRIMARY KEY,
+                    revision INTEGER NOT NULL DEFAULT 0,
+                    payload TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS board_permissions (
+                    workspace_id TEXT NOT NULL,
+                    board_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    role TEXT NOT NULL CHECK(role IN ('editor','viewer')),
+                    PRIMARY KEY (workspace_id,board_id,user_id),
+                    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS user_security (
+                    user_id TEXT PRIMARY KEY,
+                    totp_secret TEXT,
+                    totp_enabled INTEGER NOT NULL DEFAULT 0,
+                    email_verified_at TEXT,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS email_verifications (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    token_hash TEXT NOT NULL UNIQUE,
+                    expires_at TEXT NOT NULL,
+                    used_at TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS webauthn_challenges (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT,
+                    email TEXT,
+                    kind TEXT NOT NULL,
+                    challenge BLOB NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS webauthn_credentials (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    credential_id BLOB NOT NULL UNIQUE,
+                    public_key BLOB NOT NULL,
+                    sign_count INTEGER NOT NULL DEFAULT 0,
+                    transports TEXT NOT NULL DEFAULT '[]',
+                    device_name TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    last_used_at TEXT,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS audit_logs (
+                    id TEXT PRIMARY KEY,
+                    workspace_id TEXT,
+                    user_id TEXT,
+                    action TEXT NOT NULL,
+                    resource TEXT NOT NULL,
+                    request_id TEXT NOT NULL,
+                    ip_address TEXT NOT NULL,
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS audit_logs_workspace_idx
+                    ON audit_logs(workspace_id,created_at);
+                CREATE TABLE IF NOT EXISTS push_subscriptions (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    endpoint TEXT NOT NULL UNIQUE,
+                    p256dh TEXT NOT NULL,
+                    auth TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS integrations (
+                    id TEXT PRIMARY KEY,
+                    workspace_id TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    config TEXT NOT NULL,
+                    secret TEXT NOT NULL,
+                    active INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS custom_fields (
+                    id TEXT PRIMARY KEY,
+                    workspace_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    field_type TEXT NOT NULL,
+                    options TEXT NOT NULL DEFAULT '[]',
+                    required INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS public_shares (
+                    id TEXT PRIMARY KEY,
+                    workspace_id TEXT NOT NULL,
+                    token_hash TEXT NOT NULL UNIQUE,
+                    board_id TEXT,
+                    mode TEXT NOT NULL,
+                    password_hash TEXT,
+                    expires_at TEXT,
+                    created_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS collaboration_operations (
+                    id TEXT PRIMARY KEY,
+                    workspace_id TEXT,
+                    task_id TEXT NOT NULL,
+                    client_id TEXT NOT NULL,
+                    user_id TEXT,
+                    field TEXT NOT NULL,
+                    operation TEXT NOT NULL,
+                    lamport INTEGER NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS collaboration_operations_task_idx
+                    ON collaboration_operations(task_id,lamport,created_at);
                 CREATE TABLE IF NOT EXISTS schema_migrations (
                     version INTEGER PRIMARY KEY,
                     applied_at TEXT NOT NULL
@@ -306,6 +444,9 @@ class Database:
             )
             connection.execute(
                 "INSERT INTO schema_migrations(version,applied_at) VALUES (3,?) ON CONFLICT(version) DO NOTHING", (utc_now(),)
+            )
+            connection.execute(
+                "INSERT INTO schema_migrations(version,applied_at) VALUES (4,?) ON CONFLICT(version) DO NOTHING", (utc_now(),)
             )
             connection.execute(
                 "INSERT INTO boards(id, name, created_at) VALUES (?, ?, ?) ON CONFLICT(id) DO NOTHING",

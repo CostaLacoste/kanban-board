@@ -48,6 +48,7 @@ test("новые инструменты полностью переведены 
     "command.", "batch.", "time.", "attachment.", "automation.",
     "account.", "comment.", "collaboration.",
     "notifications.", "planning.",
+    "platform.", "security.",
   ];
   const featureKeys = getTranslationKeys("ru").filter((key) =>
     prefixes.some((prefix) => key.startsWith(prefix)),

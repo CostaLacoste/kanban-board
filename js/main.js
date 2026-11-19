@@ -32,30 +32,50 @@ import { setLanguage, t, translateDocument } from "./i18n.js";
 import { applyAutomations, defaultAutomations } from "./automations.js";
 import {
   connectRealtime,
+  createCloudWorkspace,
+  createCustomField,
   createGoal,
+  createIntegration,
   createInvitation,
+  createPublicShare,
   createTaskComment,
+  enablePushNotifications,
+  enableTotp,
   flushWorkspaceQueue,
   getAccountMembers,
+  getActiveWorkspaceId,
   getApiConfiguration,
+  getAuditLog,
   getCurrentAccount,
+  getMyTasks,
   getGoals,
   getInvitations,
+  getSecurityStatus,
   getNotifications,
   getSessions,
+  listCloudWorkspaces,
+  listCustomFields,
+  listIntegrations,
   loginAccount,
+  loginWithPasskey,
   loadRemoteWorkspace,
   logoutAccount,
   markAllNotificationsRead,
   markNotificationRead,
   reactToComment,
+  registerPasskey,
   registerAccount,
   requestPasswordReset,
   revokeSession,
   scheduleWorkspaceSync,
+  sendEmailVerification,
   sendRealtime,
+  setActiveWorkspaceId,
   setApiConfiguration,
   setTaskWatching,
+  setupTotp,
+  testIntegration,
+  runAssistant,
   updateComment,
   updateAccountMember,
 } from "./api.js";
@@ -130,6 +150,18 @@ const ownerTools = document.querySelector("[data-owner-tools]");
 const goalList = document.querySelector("[data-goal-list]");
 const roadmap = document.querySelector("[data-roadmap]");
 const goalSelect = document.querySelector("#task-goal");
+const platformDialog = document.querySelector("#platform-dialog");
+const platformStatus = document.querySelector("[data-platform-status]");
+const cloudWorkspaceControl = document.querySelector("[data-cloud-workspace-control]");
+const cloudWorkspaceSelect = document.querySelector("#cloud-workspace-select");
+const workspaceList = document.querySelector("[data-workspace-list]");
+const myTaskList = document.querySelector("[data-my-tasks]");
+const securityStatus = document.querySelector("[data-security-status]");
+const integrationList = document.querySelector("[data-integration-list]");
+const customFieldList = document.querySelector("[data-custom-field-list]");
+const auditList = document.querySelector("[data-audit-list]");
+const customFieldsEditor = document.querySelector("[data-custom-fields-editor]");
+const customFieldsInputs = document.querySelector("[data-custom-fields-inputs]");
 
 let activeBoardId = "default";
 let sortMode = "manual";
@@ -155,6 +187,13 @@ let goals = [];
 let remoteNotifications = [];
 let invitations = [];
 let sessions = [];
+let cloudWorkspaces = [];
+let cloudMyTasks = [];
+let cloudIntegrations = [];
+let cloudCustomFields = [];
+let security = null;
+let auditEntries = [];
+let collaborationLamport = 0;
 
 function getBoardTasks({ archived = false } = {}) {
   return getTasks().filter(
@@ -415,6 +454,17 @@ function renderAccountPanel() {
 
 async function refreshAccount() {
   currentAccount = await getCurrentAccount();
+  cloudWorkspaces = currentAccount ? await listCloudWorkspaces().catch(() => []) : [];
+  if (cloudWorkspaces.length > 0 && !cloudWorkspaces.some((item) => item.id === getActiveWorkspaceId())) {
+    setActiveWorkspaceId(cloudWorkspaces[0].id);
+  }
+  cloudWorkspaceControl.hidden = cloudWorkspaces.length === 0;
+  cloudWorkspaceSelect.replaceChildren();
+  cloudWorkspaces.forEach((workspace) => cloudWorkspaceSelect.add(new Option(workspace.name, workspace.id)));
+  cloudWorkspaceSelect.value = getActiveWorkspaceId();
+  cloudCustomFields = currentAccount && getActiveWorkspaceId()
+    ? await listCustomFields(getActiveWorkspaceId()).catch(() => [])
+    : [];
   remoteMembers = currentAccount ? await getAccountMembers() : [];
   [invitations, sessions, remoteNotifications, goals] = currentAccount
     ? await Promise.all([
@@ -435,15 +485,111 @@ async function refreshAccount() {
   syncTaskFormOptions(form.elements.taskId.value);
 }
 
+function platformRow(title, detail = "") {
+  const row = document.createElement("div");
+  row.className = "account-member";
+  const identity = document.createElement("div");
+  const strong = document.createElement("strong");
+  strong.textContent = title;
+  const span = document.createElement("span");
+  span.textContent = detail;
+  identity.append(strong, span);
+  row.append(identity);
+  return row;
+}
+
+function renderPlatformConsole() {
+  const workspaceId = getActiveWorkspaceId();
+  workspaceList.replaceChildren(...cloudWorkspaces.map((workspace) => {
+    const row = platformRow(workspace.name, workspace.role);
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "mini-button";
+    open.dataset.action = "select-workspace";
+    open.dataset.workspaceId = workspace.id;
+    open.textContent = workspace.id === workspaceId ? "✓" : "→";
+    row.append(open);
+    return row;
+  }));
+  myTaskList.replaceChildren(...cloudMyTasks.map((task) => platformRow(task.title, task.workspaceName)));
+  if (cloudMyTasks.length === 0) myTaskList.append(platformRow(t("platform.empty")));
+  securityStatus.textContent = security
+    ? `${t("security.email")}: ${security.emailVerified ? "✓" : "—"} · 2FA: ${security.totpEnabled ? "✓" : "—"} · Passkeys: ${security.passkeys}`
+    : t("platform.empty");
+  integrationList.replaceChildren(...cloudIntegrations.map((item) => {
+    const row = platformRow(item.name, item.kind);
+    if (["slack", "telegram"].includes(item.kind)) {
+      const testButton = document.createElement("button");
+      testButton.type = "button";
+      testButton.className = "mini-button";
+      testButton.dataset.action = "test-integration";
+      testButton.dataset.integrationId = item.id;
+      testButton.textContent = "TEST";
+      row.append(testButton);
+    }
+    return row;
+  }));
+  customFieldList.replaceChildren(...cloudCustomFields.map((item) => platformRow(item.name, item.fieldType)));
+  auditList.replaceChildren(...auditEntries.slice(0, 50).map((item) => platformRow(
+    `${item.action.toUpperCase()} ${item.resource}`,
+    `${item.user} · ${new Intl.DateTimeFormat(undefined, { dateStyle: "short", timeStyle: "short" }).format(new Date(item.createdAt))}`,
+  )));
+}
+
+function renderCustomFieldsEditor(task = null) {
+  customFieldsInputs.replaceChildren();
+  customFieldsEditor.hidden = cloudCustomFields.length === 0;
+  cloudCustomFields.forEach((field) => {
+    const label = document.createElement("label");
+    label.className = "form-field";
+    const title = document.createElement("span");
+    title.textContent = field.name;
+    let input;
+    if (field.fieldType === "select") {
+      input = document.createElement("select");
+      input.add(new Option("—", ""));
+      (field.options || []).forEach((option) => input.add(new Option(option, option)));
+    } else {
+      input = document.createElement("input");
+      input.type = { number: "number", date: "date" }[field.fieldType] || "text";
+    }
+    input.dataset.customFieldId = field.id;
+    input.required = Boolean(field.required);
+    input.value = task?.customValues?.[field.id] ?? "";
+    label.append(title, input);
+    customFieldsInputs.append(label);
+  });
+}
+
+async function refreshPlatformData() {
+  if (!currentAccount) {
+    platformStatus.textContent = t("platform.signIn");
+    renderPlatformConsole();
+    return;
+  }
+  const workspaceId = getActiveWorkspaceId();
+  [cloudMyTasks, security, cloudIntegrations, cloudCustomFields, auditEntries] = await Promise.all([
+    getMyTasks().catch(() => []),
+    getSecurityStatus().catch(() => null),
+    workspaceId ? listIntegrations(workspaceId).catch(() => []) : [],
+    workspaceId ? listCustomFields(workspaceId).catch(() => []) : [],
+    workspaceId && currentAccount.role === "owner" ? getAuditLog(workspaceId).catch(() => []) : [],
+  ]);
+  platformStatus.textContent = cloudWorkspaces.find((item) => item.id === workspaceId)?.name || t("platform.empty");
+  renderPlatformConsole();
+}
+
 async function authenticateAccount(mode) {
   const email = document.querySelector("#account-email").value.trim();
   const password = document.querySelector("#account-password").value;
   const name = document.querySelector("#account-name").value.trim();
+  const otp = document.querySelector("#account-otp").value.trim();
   try {
     currentAccount = mode === "register"
       ? await registerAccount({ email, password, name })
-      : await loginAccount({ email, password });
+      : await loginAccount({ email, password, otp: otp || null });
     document.querySelector("#account-password").value = "";
+    document.querySelector("#account-otp").value = "";
     await refreshAccount();
     void initializeRemoteWorkspace();
   } catch (error) {
@@ -623,6 +769,12 @@ function handleRealtimeEvent(message) {
     }
     collaborationStatus.hidden = false;
     collaborationStatus.textContent = t("collaboration.remoteDraft", { name: message.actor.name });
+  }
+  if (message.type === "task.operation" && message.taskId === activeTaskId) {
+    collaborationLamport = Math.max(collaborationLamport, Number(message.lamport) || 0) + 1;
+    const input = form.elements[message.field];
+    const value = message.operation?.value;
+    if (input && value !== undefined && document.activeElement !== input) input.value = value;
   }
   if (message.type === "comment.created") {
     const task = getTaskById(message.taskId);
@@ -1069,6 +1221,7 @@ function openCreateDialog() {
   collaborationStatus.hidden = true;
   form.elements.milestone.checked = false;
   goalSelect.value = "";
+  renderCustomFieldsEditor();
   taskDialogTitle.textContent = t("task.new");
   taskDialog.showModal();
   form.elements.title.focus();
@@ -1098,6 +1251,7 @@ function openEditDialog(taskId) {
   form.elements.startDate.value = task.startDate ?? "";
   form.elements.goalId.value = task.goalId ?? "";
   form.elements.milestone.checked = Boolean(task.milestone);
+  renderCustomFieldsEditor(task);
   [...form.elements.dependsOn.options].forEach((option) => {
     option.selected = task.dependsOn?.includes(option.value);
   });
@@ -1293,6 +1447,11 @@ form.addEventListener("submit", (event) => {
   const taskData = Object.fromEntries(new FormData(form).entries());
   taskData.dependsOn = [...dependencySelect.selectedOptions].map((option) => option.value);
   taskData.milestone = form.elements.milestone.checked;
+  taskData.customValues = Object.fromEntries(
+    [...customFieldsInputs.querySelectorAll("[data-custom-field-id]")]
+      .map((input) => [input.dataset.customFieldId, input.value])
+      .filter(([, value]) => value !== ""),
+  );
   taskData.checklist = collectChecklist();
   taskData.boardId = activeBoardId;
   const isEditing = Boolean(taskData.taskId);
@@ -1355,6 +1514,11 @@ form.addEventListener("input", (event) => {
   clearTimeout(draftTimer);
   draftTimer = setTimeout(() => {
     sendRealtime({ type: "task.draft", taskId, field, value: event.target.value });
+    collaborationLamport += 1;
+    sendRealtime({
+      type: "task.operation", workspaceId: getActiveWorkspaceId() || null, taskId, field,
+      operation: { kind: "set", value: event.target.value }, lamport: collaborationLamport,
+    });
   }, 180);
 });
 
@@ -1384,12 +1548,118 @@ document.addEventListener("click", (event) => {
       accountDialog.showModal();
       void refreshAccount();
       break;
+    case "open-platform":
+      platformDialog.showModal();
+      void refreshPlatformData();
+      break;
+    case "close-platform": platformDialog.close(); break;
+    case "select-workspace":
+      setActiveWorkspaceId(button.dataset.workspaceId);
+      cloudWorkspaceSelect.value = button.dataset.workspaceId;
+      void initializeRemoteWorkspace();
+      void refreshPlatformData();
+      break;
+    case "create-workspace": {
+      const input = document.querySelector("#workspace-name");
+      const name = input.value.trim();
+      if (!name) break;
+      void createCloudWorkspace(name).then(async (workspace) => {
+        input.value = "";
+        setActiveWorkspaceId(workspace.id);
+        await refreshAccount();
+        await initializeRemoteWorkspace();
+        await refreshPlatformData();
+      }).catch(() => showNotification(t("account.error"), "error"));
+      break;
+    }
+    case "setup-totp":
+      void setupTotp().then(async (result) => {
+        const code = window.prompt(`${result.uri}\n\n${t("security.enterCode")}`, "");
+        if (!code) return;
+        await enableTotp(code);
+        await refreshPlatformData();
+        showNotification(t("security.enabled"));
+      }).catch(() => showNotification(t("account.error"), "error"));
+      break;
+    case "register-passkey":
+      void registerPasskey().then(() => refreshPlatformData()).catch((error) => showNotification(error.message, "error"));
+      break;
+    case "passkey-login": {
+      const email = document.querySelector("#account-email").value.trim();
+      if (!email) break;
+      void loginWithPasskey(email).then(async (account) => {
+        currentAccount = account;
+        await refreshAccount();
+        await initializeRemoteWorkspace();
+      }).catch((error) => showNotification(error.message, "error"));
+      break;
+    }
+    case "verify-email":
+      void sendEmailVerification().then((result) => {
+        platformStatus.textContent = result.verificationToken
+          ? `${t("security.verificationToken")}: ${result.verificationToken}`
+          : t("security.verificationSent");
+      }).catch(() => showNotification(t("account.error"), "error"));
+      break;
+    case "enable-push":
+      void (async () => {
+        const permission = await Notification.requestPermission();
+        if (permission !== "granted") throw new Error(t("hub.notificationsDenied"));
+        const registration = await navigator.serviceWorker.ready;
+        await enablePushNotifications(registration);
+        showNotification(t("hub.notificationsEnabled"));
+      })().catch((error) => showNotification(error.message, "error"));
+      break;
+    case "create-integration": {
+      const workspaceId = getActiveWorkspaceId();
+      const nameInput = document.querySelector("#integration-name");
+      const kind = document.querySelector("#integration-kind").value;
+      const endpointInput = document.querySelector("#integration-endpoint");
+      if (!workspaceId || !nameInput.value.trim()) break;
+      const [botToken, chatId] = endpointInput.value.split("|", 2);
+      const config = kind === "slack" ? { webhookUrl: endpointInput.value.trim() }
+        : kind === "telegram" ? { botToken: botToken?.trim(), chatId: chatId?.trim() } : {};
+      void createIntegration({ workspaceId, kind, name: nameInput.value.trim(), config }).then(async (item) => {
+        nameInput.value = "";
+        endpointInput.value = "";
+        await refreshPlatformData();
+        if (item.secret) platformStatus.textContent = `${t("platform.webhookSecret")}: ${item.secret}`;
+      }).catch(() => showNotification(t("account.error"), "error"));
+      break;
+    }
+    case "test-integration":
+      void testIntegration(button.dataset.integrationId)
+        .then(() => showNotification("Integration OK"))
+        .catch(() => showNotification(t("account.error"), "error"));
+      break;
+    case "create-custom-field": {
+      const workspaceId = getActiveWorkspaceId();
+      const nameInput = document.querySelector("#custom-field-name");
+      const fieldType = document.querySelector("#custom-field-type").value;
+      if (!workspaceId || !nameInput.value.trim()) break;
+      void createCustomField({ workspaceId, name: nameInput.value.trim(), fieldType, options: [], required: false }).then(async () => {
+        nameInput.value = "";
+        await refreshPlatformData();
+      }).catch(() => showNotification(t("account.error"), "error"));
+      break;
+    }
+    case "create-share": {
+      const workspaceId = getActiveWorkspaceId();
+      if (!workspaceId) break;
+      void createPublicShare({
+        workspaceId, boardId: activeBoardId, mode: document.querySelector("#share-mode").value,
+        password: document.querySelector("#share-password").value || null,
+      }).then((share) => {
+        const base = getApiConfiguration().url;
+        document.querySelector("[data-share-result]").textContent = `${base}/public/${share.token}`;
+      }).catch(() => showNotification(t("account.error"), "error"));
+      break;
+    }
     case "close-account": accountDialog.close(); break;
     case "save-api-url":
       setApiConfiguration(accountApiUrl.value);
       accountStatus.textContent = t("account.apiSaved");
-      void refreshAccount();
-      void initializeRemoteWorkspace();
+      void refreshAccount().then(() => initializeRemoteWorkspace());
       break;
     case "account-login": void authenticateAccount("login"); break;
     case "account-register": void authenticateAccount("register"); break;
@@ -1421,6 +1691,9 @@ document.addEventListener("click", (event) => {
       logoutAccount();
       currentAccount = null;
       remoteMembers = [];
+      cloudWorkspaces = [];
+      setActiveWorkspaceId("");
+      cloudWorkspaceControl.hidden = true;
       renderAccountPanel();
       break;
     case "open-notifications":
@@ -1721,6 +1994,25 @@ sortSelect.addEventListener("change", () => {
   refreshBoard();
 });
 
+cloudWorkspaceSelect.addEventListener("change", () => {
+  setActiveWorkspaceId(cloudWorkspaceSelect.value);
+  void initializeRemoteWorkspace();
+  void refreshPlatformData();
+});
+
+platformDialog.addEventListener("click", (event) => {
+  const action = event.target.closest("[data-assistant-action]")?.dataset.assistantAction;
+  if (!action) return;
+  const output = document.querySelector("[data-assistant-result]");
+  output.textContent = t("platform.loading");
+  void runAssistant({
+    action,
+    workspaceId: getActiveWorkspaceId() || null,
+    text: document.querySelector("#assistant-text").value,
+  }).then((result) => { output.textContent = JSON.stringify(result, null, 2); })
+    .catch((error) => { output.textContent = error.message; });
+});
+
 boardSelect.addEventListener("change", () => {
   activeBoardId = boardSelect.value;
   saveSetting("activeBoard", activeBoardId);
@@ -1943,5 +2235,4 @@ updateUndoButton();
 refreshBoard();
 renderAccountPanel();
 window.setInterval(checkDeadlineReminders, 60 * 60 * 1000);
-void refreshAccount();
-void initializeRemoteWorkspace();
+void refreshAccount().then(() => initializeRemoteWorkspace());

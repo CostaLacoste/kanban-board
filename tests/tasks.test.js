@@ -76,6 +76,15 @@ describe("задачи", () => {
     assert.equal(task.milestone, true);
   });
 
+  test("сохраняет значения пользовательских полей", () => {
+    const task = createTask({
+      title: "Custom data",
+      customValues: { cost: 42, channel: "GitHub" },
+    });
+    assert.deepEqual(task.customValues, { cost: 42, channel: "GitHub" });
+    assert.deepEqual(updateTask(task.id, { customValues: { cost: 84 } }).customValues, { cost: 84 });
+  });
+
   test("поддерживает пользовательский статус и нормализует приоритет", () => {
     const task = createTask({
       title: "Задача",
