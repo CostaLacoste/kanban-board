@@ -24,6 +24,7 @@ test("поддерживает Igbo, узбекский, украинский, �
   Object.entries(translations).forEach(([language, expected]) => {
     setLanguage(language);
     assert.equal(t("board.default"), expected);
+    assert.equal(t("app.title"), "Flowboard");
   });
 });
 
