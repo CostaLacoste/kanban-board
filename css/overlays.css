@@ -12,6 +12,10 @@
   width: min(calc(100% - 2rem), 420px);
 }
 
+.dialog.dialog--wide {
+  width: min(1080px, calc(100% - 2rem));
+}
+
 .dialog::backdrop {
   background: rgb(118 81 244 / 42%);
   backdrop-filter: blur(2px);
@@ -261,6 +265,108 @@
   min-width: 0;
 }
 
+.platform-form-row,
+.platform-import-form,
+.platform-integration-form,
+.platform-custom-field-form,
+.platform-share-form,
+.platform-action-grid,
+.platform-grid .oauth-actions {
+  display: grid;
+  gap: 0.65rem;
+  align-items: stretch;
+}
+
+.platform-form-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.platform-action-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.platform-grid .oauth-actions {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 0.65rem;
+}
+
+.platform-import-form {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.platform-import-form select {
+  grid-row: 1;
+  grid-column: 1;
+}
+
+.platform-import-form button {
+  grid-row: 1;
+  grid-column: 2;
+}
+
+.platform-import-form input[type="file"] {
+  grid-row: 2;
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
+  padding: 0.35rem;
+  overflow: hidden;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 2px solid var(--color-border);
+}
+
+.platform-import-form input[type="file"]::file-selector-button {
+  min-height: 38px;
+  padding: 0.5rem 0.7rem;
+  margin-right: 0.65rem;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  background: var(--color-lime);
+  border: 2px solid var(--color-border);
+  cursor: pointer;
+}
+
+.platform-integration-form,
+.platform-custom-field-form,
+.platform-share-form {
+  grid-template-columns: minmax(7rem, 0.65fr) minmax(0, 1.35fr) auto;
+}
+
+.platform-grid input,
+.platform-grid select,
+.platform-grid button {
+  min-width: 0;
+}
+
+.platform-grid .platform-form-row input,
+.platform-grid .platform-import-form select,
+.platform-grid .platform-integration-form input,
+.platform-grid .platform-integration-form select,
+.platform-grid .platform-custom-field-form input,
+.platform-grid .platform-custom-field-form select,
+.platform-grid .platform-share-form input,
+.platform-grid .platform-share-form select,
+#integration-endpoint {
+  width: 100%;
+  margin: 0;
+}
+
+#integration-endpoint {
+  display: block;
+  margin-top: 0.65rem;
+}
+
+.platform-action-grid > button,
+.platform-grid .oauth-actions > button {
+  width: 100%;
+  padding-inline: 0.55rem;
+  white-space: normal;
+}
+
 .platform-output,
 [data-share-result] {
   display: block;
@@ -290,6 +396,34 @@
 
   .platform-grid .hub-card--wide {
     grid-column: auto;
+  }
+
+  .platform-action-grid,
+  .platform-grid .oauth-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .platform-integration-form,
+  .platform-custom-field-form,
+  .platform-share-form {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .platform-integration-form input,
+  .platform-custom-field-form input,
+  .platform-share-form input {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .platform-share-form select {
+    grid-row: 1;
+    grid-column: 1;
+  }
+
+  .platform-share-form button {
+    grid-row: 1;
+    grid-column: 2;
   }
 }
 

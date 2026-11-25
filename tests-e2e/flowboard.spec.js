@@ -298,9 +298,22 @@ test("показывает комментарии и упоминания в з�
 });
 
 test("открывает платформенную консоль и переводит её", async ({ page }) => {
+  await page.setViewportSize({ width: 1370, height: 1240 });
   await page.locator('[data-action="open-platform"]').click();
   await expect(page.locator("#platform-title")).toHaveText("Командная платформа");
   await expect(page.locator("[data-platform-status]")).toHaveText("Войдите в аккаунт");
+  const platformWidth = await page.locator("#platform-dialog").evaluate((dialog) => dialog.getBoundingClientRect().width);
+  expect(platformWidth).toBeGreaterThan(900);
+  const overflowingControls = await page.locator(".platform-grid .hub-card").evaluateAll((cards) => cards.flatMap((card) => {
+    const cardBox = card.getBoundingClientRect();
+    return [...card.querySelectorAll("button, input, select")]
+      .filter((control) => {
+        const controlBox = control.getBoundingClientRect();
+        return controlBox.left < cardBox.left || controlBox.right > cardBox.right;
+      })
+      .map((control) => control.id || control.getAttribute("data-action") || control.tagName);
+  }));
+  expect(overflowingControls).toEqual([]);
   await page.locator("#language-select").selectOption("uk");
   await expect(page.locator("#platform-title")).toHaveText("Командна платформа");
   await expect(page.locator('[data-action="create-workspace"]')).toHaveText("Створити");

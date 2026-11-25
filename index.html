@@ -15,7 +15,7 @@
     <link rel="shortcut icon" href="./favicon.ico?v=2" type="image/x-icon" />
     <link rel="mask-icon" href="./assets/icons/safari-pinned-tab.svg?v=2" color="#7c4dff" />
     <link rel="apple-touch-icon" href="./assets/icons/flowboard-mark-192.png?v=2" sizes="192x192" />
-    <link rel="stylesheet" href="./css/style.css?v=10" />
+    <link rel="stylesheet" href="./css/style.css?v=11" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <script type="module" src="./js/main.js"></script>
   </head>
@@ -610,7 +610,7 @@
         <div class="platform-grid">
           <section class="hub-card">
             <p class="eyebrow" data-i18n="platform.workspaces">Пространства</p>
-            <div class="inline-field"><input id="workspace-name" maxlength="100" data-i18n-placeholder="platform.workspaceName" placeholder="Название пространства" /><button class="primary-button" type="button" data-action="create-workspace" data-i18n="hub.create">Создать</button></div>
+            <div class="platform-form-row platform-form-row--workspace"><input id="workspace-name" maxlength="100" data-i18n-placeholder="platform.workspaceName" placeholder="Название пространства" /><button class="primary-button" type="button" data-action="create-workspace" data-i18n="hub.create">Создать</button></div>
             <div class="account-members" data-workspace-list></div>
           </section>
           <section class="hub-card">
@@ -620,13 +620,13 @@
           <section class="hub-card">
             <p class="eyebrow" data-i18n="security.title">Безопасность</p>
             <div class="security-status" data-security-status></div>
-            <div class="hub-actions"><button class="secondary-button" type="button" data-action="setup-totp" data-i18n="security.setupTotp">Настроить 2FA</button><button class="secondary-button" type="button" data-action="register-passkey" data-i18n="security.addPasskey">Добавить Passkey</button><button class="secondary-button" type="button" data-action="verify-email" data-i18n="security.verifyEmail">Подтвердить email</button><button class="secondary-button" type="button" data-action="enable-push" data-i18n="security.enablePush">Включить push</button></div>
+            <div class="platform-action-grid"><button class="secondary-button" type="button" data-action="setup-totp" data-i18n="security.setupTotp">Настроить 2FA</button><button class="secondary-button" type="button" data-action="register-passkey" data-i18n="security.addPasskey">Добавить Passkey</button><button class="secondary-button" type="button" data-action="verify-email" data-i18n="security.verifyEmail">Подтвердить email</button><button class="secondary-button" type="button" data-action="enable-push" data-i18n="security.enablePush">Включить push</button></div>
             <div class="hub-actions oauth-actions"><button class="mini-button" type="button" data-oauth-provider="google">Google</button><button class="mini-button" type="button" data-oauth-provider="github">GitHub</button><button class="mini-button" type="button" data-oauth-provider="microsoft">Microsoft</button></div>
           </section>
           <section class="hub-card">
             <p class="eyebrow" data-i18n="feature.import">Импорт</p>
             <h3 data-i18n="feature.importTitle">Trello, Jira и Notion</h3>
-            <div class="inline-field"><select id="external-import-provider"><option value="trello">Trello</option><option value="jira">Jira</option><option value="notion">Notion</option></select><input id="external-import-file" type="file" accept="application/json,.json" /><button class="secondary-button" type="button" data-action="import-external" data-i18n="workspace.import">Импорт</button></div>
+            <div class="platform-import-form"><select id="external-import-provider"><option value="trello">Trello</option><option value="jira">Jira</option><option value="notion">Notion</option></select><input id="external-import-file" type="file" accept="application/json,.json" /><button class="secondary-button" type="button" data-action="import-external" data-i18n="workspace.import">Импорт</button></div>
           </section>
           <section class="hub-card">
             <p class="eyebrow" data-i18n="feature.backups">Резервные копии</p>
@@ -635,18 +635,18 @@
           </section>
           <section class="hub-card">
             <p class="eyebrow" data-i18n="platform.integrations">Интеграции</p>
-            <div class="inline-field"><select id="integration-kind"><option value="github">GitHub</option><option value="slack">Slack</option><option value="telegram">Telegram</option><option value="calendar">Calendar</option></select><input id="integration-name" maxlength="100" data-i18n-placeholder="platform.integrationName" placeholder="Название" /><button class="secondary-button" type="button" data-action="create-integration">+</button></div>
+            <div class="platform-integration-form"><select id="integration-kind"><option value="github">GitHub</option><option value="slack">Slack</option><option value="telegram">Telegram</option><option value="calendar">Calendar</option></select><input id="integration-name" maxlength="100" data-i18n-placeholder="platform.integrationName" placeholder="Название" /><button class="secondary-button" type="button" data-action="create-integration" aria-label="Добавить интеграцию">+</button></div>
             <input id="integration-endpoint" type="text" placeholder="Slack webhook URL / Telegram BOT_TOKEN|CHAT_ID" />
             <div class="account-members" data-integration-list></div>
           </section>
           <section class="hub-card">
             <p class="eyebrow" data-i18n="platform.customFields">Пользовательские поля</p>
-            <div class="inline-field"><input id="custom-field-name" maxlength="100" data-i18n-placeholder="platform.fieldName" placeholder="Название поля" /><select id="custom-field-type"><option value="text">Text</option><option value="number">Number</option><option value="date">Date</option><option value="select">Select</option><option value="user">User</option></select><button class="secondary-button" type="button" data-action="create-custom-field">+</button></div>
+            <div class="platform-custom-field-form"><input id="custom-field-name" maxlength="100" data-i18n-placeholder="platform.fieldName" placeholder="Название поля" /><select id="custom-field-type"><option value="text">Text</option><option value="number">Number</option><option value="date">Date</option><option value="select">Select</option><option value="user">User</option></select><button class="secondary-button" type="button" data-action="create-custom-field" aria-label="Добавить поле">+</button></div>
             <div class="account-members" data-custom-field-list></div>
           </section>
           <section class="hub-card">
             <p class="eyebrow" data-i18n="platform.publicAccess">Публичный доступ</p>
-            <div class="hub-actions"><select id="share-mode"><option value="view" data-i18n="platform.view">Просмотр</option><option value="form" data-i18n="platform.form">Форма</option></select><input id="share-password" type="password" data-i18n-placeholder="platform.optionalPassword" placeholder="Пароль (необязательно)" /><button class="secondary-button" type="button" data-action="create-share" data-i18n="platform.createLink">Создать ссылку</button></div>
+            <div class="platform-share-form"><select id="share-mode"><option value="view" data-i18n="platform.view">Просмотр</option><option value="form" data-i18n="platform.form">Форма</option></select><input id="share-password" type="password" data-i18n-placeholder="platform.optionalPassword" placeholder="Пароль (необязательно)" /><button class="secondary-button" type="button" data-action="create-share" data-i18n="platform.createLink">Создать ссылку</button></div>
             <output data-share-result></output>
           </section>
           <section class="hub-card hub-card--wide">
