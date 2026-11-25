@@ -29,9 +29,14 @@ import {
 } from "./tasks.js";
 import { renderArchive, renderBoard, renderCalendar, showNotification } from "./ui.js";
 import { setLanguage, t, translateDocument } from "./i18n.js";
-import { applyAutomations, defaultAutomations } from "./automations.js";
+import { applyAutomations, createAutomationRule, defaultAutomations } from "./automations.js";
+import { importExternalData } from "./importers.js";
 import {
   connectRealtime,
+  completeOAuthLogin,
+  createAutomationRuleRemote,
+  deleteAutomationRuleRemote,
+  createBackup,
   createCloudWorkspace,
   createCustomField,
   createGoal,
@@ -52,16 +57,20 @@ import {
   getInvitations,
   getSecurityStatus,
   getNotifications,
+  getNotificationSchedule,
   getSessions,
   listCloudWorkspaces,
+  listBackups,
   listCustomFields,
   listIntegrations,
+  listAttachmentVersions,
   loginAccount,
   loginWithPasskey,
   loadRemoteWorkspace,
   logoutAccount,
   markAllNotificationsRead,
   markNotificationRead,
+  resolveSyncConflict,
   reactToComment,
   registerPasskey,
   registerAccount,
@@ -76,6 +85,11 @@ import {
   setupTotp,
   testIntegration,
   runAssistant,
+  setNotificationSchedule,
+  startOAuth,
+  restoreBackup,
+  replaceAttachmentVersion,
+  downloadBackup,
   updateComment,
   updateAccountMember,
 } from "./api.js";
@@ -162,6 +176,11 @@ const customFieldList = document.querySelector("[data-custom-field-list]");
 const auditList = document.querySelector("[data-audit-list]");
 const customFieldsEditor = document.querySelector("[data-custom-fields-editor]");
 const customFieldsInputs = document.querySelector("[data-custom-fields-inputs]");
+const backupList = document.querySelector("[data-backup-list]");
+const syncStatus = document.querySelector("[data-sync-status]");
+const syncConflictDialog = document.querySelector("#sync-conflict-dialog");
+const automationRuleList = document.querySelector("[data-automation-rules]");
+const dashboardWidgets = document.querySelector("[data-dashboard-widgets]");
 
 let activeBoardId = "default";
 let sortMode = "manual";
@@ -194,6 +213,9 @@ let cloudCustomFields = [];
 let security = null;
 let auditEntries = [];
 let collaborationLamport = 0;
+let cloudBackups = [];
+let notificationSchedule = { leadMinutes: 60, digestFrequency: "daily", digestHour: 9, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone };
+let dashboardPreferences = { overview: true, deadlines: true, workload: true, goals: true };
 
 function getBoardTasks({ archived = false } = {}) {
   return getTasks().filter(
@@ -247,6 +269,7 @@ function getVisibleTasks(tasks) {
       tagSelect.value,
       {
         assignee: assigneeFilter.value,
+        currentUser: currentAccount?.name || currentAccount?.email || "",
         deadlineFrom: deadlineFromFilter.value,
         deadlineTo: deadlineToFilter.value,
       },
@@ -278,6 +301,7 @@ function persistWorkspace() {
     saveSetting("activity", activity),
     saveSetting("accessibility", accessibility),
     saveSetting("automations", automations),
+    saveSetting("dashboard", dashboardPreferences),
     saveSetting("goals", goals),
   ].every(Boolean);
   if (saved && !applyingRemoteWorkspace) {
@@ -363,7 +387,15 @@ function renderAttachmentEditor() {
     remove.dataset.action = "remove-attachment";
     remove.dataset.attachmentId = attachment.id;
     remove.textContent = "×";
-    row.append(name, remove);
+    row.append(name);
+    if (attachment.url) {
+      const historyButton = document.createElement("button"); historyButton.className = "mini-button"; historyButton.type = "button";
+      historyButton.dataset.action = "attachment-history"; historyButton.dataset.attachmentId = attachment.id; historyButton.textContent = "v";
+      const replace = document.createElement("button"); replace.className = "mini-button"; replace.type = "button";
+      replace.dataset.action = "replace-attachment"; replace.dataset.attachmentId = attachment.id; replace.textContent = "↻";
+      row.append(historyButton, replace);
+    }
+    row.append(remove);
     attachmentEditor.append(row);
   });
 }
@@ -534,6 +566,14 @@ function renderPlatformConsole() {
     `${item.action.toUpperCase()} ${item.resource}`,
     `${item.user} · ${new Intl.DateTimeFormat(undefined, { dateStyle: "short", timeStyle: "short" }).format(new Date(item.createdAt))}`,
   )));
+  backupList.replaceChildren(...cloudBackups.map((backup) => {
+    const row = platformRow(backup.name, new Intl.DateTimeFormat(undefined, { dateStyle: "short", timeStyle: "short" }).format(new Date(backup.createdAt)));
+    for (const [action, label] of [["download-cloud-backup", "↓"], ["restore-cloud-backup", "↺"]]) {
+      const control = document.createElement("button"); control.type = "button"; control.className = "mini-button";
+      control.dataset.action = action; control.dataset.backupId = backup.id; control.textContent = label; row.append(control);
+    }
+    return row;
+  }));
 }
 
 function renderCustomFieldsEditor(task = null) {
@@ -568,12 +608,13 @@ async function refreshPlatformData() {
     return;
   }
   const workspaceId = getActiveWorkspaceId();
-  [cloudMyTasks, security, cloudIntegrations, cloudCustomFields, auditEntries] = await Promise.all([
+  [cloudMyTasks, security, cloudIntegrations, cloudCustomFields, auditEntries, cloudBackups] = await Promise.all([
     getMyTasks().catch(() => []),
     getSecurityStatus().catch(() => null),
     workspaceId ? listIntegrations(workspaceId).catch(() => []) : [],
     workspaceId ? listCustomFields(workspaceId).catch(() => []) : [],
     workspaceId && currentAccount.role === "owner" ? getAuditLog(workspaceId).catch(() => []) : [],
+    workspaceId ? listBackups(workspaceId).catch(() => []) : [],
   ]);
   platformStatus.textContent = cloudWorkspaces.find((item) => item.id === workspaceId)?.name || t("platform.empty");
   renderPlatformConsole();
@@ -635,6 +676,34 @@ function renderNotificationCenter() {
     item.append(title, body, footer);
     notificationList.append(item);
   });
+}
+
+function renderAutomationRules() {
+  automationRuleList.replaceChildren(...(automations.rules || []).map((rule) => {
+    const row = platformRow(rule.name, `${rule.trigger}${rule.triggerValue ? `:${rule.triggerValue}` : ""} → ${rule.action}:${rule.actionValue}`);
+    const remove = document.createElement("button"); remove.type = "button"; remove.className = "mini-button";
+    remove.dataset.action = "delete-automation-rule"; remove.dataset.ruleId = rule.id; remove.textContent = "×"; row.append(remove);
+    return row;
+  }));
+}
+
+function renderDashboard() {
+  dashboardWidgets.replaceChildren();
+  const tasks = getBoardTasks();
+  const today = new Date().toISOString().slice(0, 10);
+  const values = {
+    overview: [t("feature.overview"), `${tasks.filter((item) => item.status === "done").length}/${tasks.length}`],
+    deadlines: [t("feature.deadlines"), tasks.filter((item) => item.deadline && item.deadline <= today && item.status !== "done").length],
+    workload: [t("feature.workload"), `${tasks.filter((item) => item.status !== "done").reduce((sum, item) => sum + Number(item.estimatedMinutes || 0), 0)}m`],
+    goals: [t("feature.goals"), goals.length],
+  };
+  Object.entries(values).forEach(([key, [label, value]]) => {
+    if (!dashboardPreferences[key]) return;
+    const card = document.createElement("div"); card.className = "dashboard-widget";
+    const span = document.createElement("span"); span.textContent = label;
+    const strong = document.createElement("strong"); strong.textContent = String(value); card.append(span, strong); dashboardWidgets.append(card);
+  });
+  document.querySelectorAll("[data-dashboard-widget]").forEach((input) => { input.checked = dashboardPreferences[input.dataset.dashboardWidget] !== false; });
 }
 
 function renderPlanning() {
@@ -1004,6 +1073,8 @@ function renderProductivityHub() {
   document.querySelectorAll("[data-automation]").forEach((input) => {
     input.checked = Boolean(automations[input.dataset.automation]);
   });
+  renderAutomationRules();
+  renderDashboard();
   applyAccessibility();
   renderPlanning();
 }
@@ -1075,6 +1146,7 @@ function createSyncPayload() {
     sort: sortMode,
     automations,
     goals,
+    dashboard: dashboardPreferences,
   };
 }
 
@@ -1089,6 +1161,7 @@ function applyRemoteWorkspace(payload) {
   activity = Array.isArray(payload.activity) ? payload.activity : activity;
   accessibility = { ...accessibility, ...(payload.accessibility || {}) };
   automations = { ...defaultAutomations, ...(payload.automations || {}) };
+  dashboardPreferences = { ...dashboardPreferences, ...(payload.dashboard || {}) };
   goals = Array.isArray(payload.goals) ? payload.goals : goals;
   activeBoardId = getBoardById(payload.activeBoardId) ? payload.activeBoardId : getBoards()[0].id;
   sortMode = payload.sort || sortMode;
@@ -1334,6 +1407,7 @@ function exportWorkspace() {
     members,
     activity,
     automations,
+    dashboard: dashboardPreferences,
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -1360,6 +1434,7 @@ async function importWorkspace(file) {
     members = Array.isArray(payload.members) ? payload.members : members;
     activity = Array.isArray(payload.activity) ? payload.activity : activity;
     automations = { ...defaultAutomations, ...(payload.automations || {}) };
+    dashboardPreferences = { ...dashboardPreferences, ...(payload.dashboard || {}) };
     activeBoardId = getBoardById(payload.activeBoardId)
       ? payload.activeBoardId
       : getBoards()[0].id;
@@ -1543,6 +1618,7 @@ document.addEventListener("click", (event) => {
 
   switch (button.dataset.action) {
     case "open-task-dialog": openCreateDialog(); break;
+    case "mobile-new-task": openCreateDialog(); break;
     case "open-account":
       renderAccountPanel();
       accountDialog.showModal();
@@ -1570,6 +1646,35 @@ document.addEventListener("click", (event) => {
         await initializeRemoteWorkspace();
         await refreshPlatformData();
       }).catch(() => showNotification(t("account.error"), "error"));
+      break;
+    }
+    case "import-external": {
+      const file = document.querySelector("#external-import-file").files[0];
+      const provider = document.querySelector("#external-import-provider").value;
+      if (!file) break;
+      void file.text().then((text) => {
+        const imported = importExternalData(provider, JSON.parse(text), activeBoardId);
+        rememberState("action.import"); setTasks([...getTasks(), ...imported]); commitChanges(t("notice.imported"));
+        document.querySelector("#external-import-file").value = "";
+      }).catch((error) => showNotification(error.message || t("notice.importError"), "error"));
+      break;
+    }
+    case "create-cloud-backup": {
+      const workspaceId = getActiveWorkspaceId(); if (!workspaceId) break;
+      void createBackup(workspaceId, `Flowboard ${new Date().toLocaleString()}`).then(refreshPlatformData).catch(() => showNotification(t("account.error"), "error"));
+      break;
+    }
+    case "restore-cloud-backup": {
+      const workspaceId = getActiveWorkspaceId(); if (!workspaceId) break;
+      void restoreBackup(workspaceId, button.dataset.backupId).then(async () => { await initializeRemoteWorkspace(); showNotification(t("feature.restored")); }).catch(() => showNotification(t("account.error"), "error"));
+      break;
+    }
+    case "download-cloud-backup": {
+      const workspaceId = getActiveWorkspaceId(); if (!workspaceId) break;
+      void downloadBackup(workspaceId, button.dataset.backupId).then((payload) => {
+        const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
+        const link = document.createElement("a"); link.href = url; link.download = `flowboard-backup-${button.dataset.backupId}.json`; link.click(); URL.revokeObjectURL(url);
+      });
       break;
     }
     case "setup-totp":
@@ -1699,6 +1804,12 @@ document.addEventListener("click", (event) => {
     case "open-notifications":
       renderNotificationCenter();
       notificationsDialog.showModal();
+      if (currentAccount) void getNotificationSchedule().then((schedule) => {
+        notificationSchedule = schedule;
+        document.querySelector("#notification-lead").value = schedule.leadMinutes;
+        document.querySelector("#notification-digest").value = schedule.digestFrequency;
+        document.querySelector("#notification-hour").value = schedule.digestHour;
+      });
       break;
     case "close-notifications": notificationsDialog.close(); break;
     case "read-notification":
@@ -1712,6 +1823,15 @@ document.addEventListener("click", (event) => {
         remoteNotifications = await getNotifications().catch(() => remoteNotifications);
         renderNotificationCenter();
       });
+      break;
+    case "save-notification-schedule":
+      notificationSchedule = {
+        leadMinutes: Number(document.querySelector("#notification-lead").value),
+        digestFrequency: document.querySelector("#notification-digest").value,
+        digestHour: Number(document.querySelector("#notification-hour").value),
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      };
+      void setNotificationSchedule(notificationSchedule).then(() => showNotification(t("feature.scheduleSaved"))).catch(() => showNotification(t("account.error"), "error"));
       break;
     case "create-goal": {
       const title = document.querySelector("#goal-title").value.trim();
@@ -1773,9 +1893,37 @@ document.addEventListener("click", (event) => {
       renderProductivityHub();
       productivityDialog.showModal();
       break;
+    case "mobile-open-hub": renderProductivityHub(); productivityDialog.showModal(); break;
+    case "add-automation-rule": {
+      const rule = createAutomationRule({
+        name: document.querySelector("#rule-name").value || t("feature.rule"),
+        trigger: document.querySelector("#rule-trigger").value,
+        triggerValue: document.querySelector("#rule-trigger-value").value,
+        action: document.querySelector("#rule-action").value,
+        actionValue: document.querySelector("#rule-action-value").value,
+      });
+      automations = { ...automations, rules: [...(automations.rules || []), rule] };
+      saveSetting("automations", automations); renderProductivityHub();
+      const workspaceId = getActiveWorkspaceId();
+      if (workspaceId && currentAccount) void createAutomationRuleRemote({ workspaceId, ...rule }).then((remoteRule) => {
+        automations = { ...automations, rules: (automations.rules || []).map((item) => item.id === rule.id ? { ...item, id: remoteRule.id } : item) };
+        saveSetting("automations", automations); renderProductivityHub();
+      }).catch(() => {});
+      break;
+    }
+    case "delete-automation-rule": {
+      const workspaceId = getActiveWorkspaceId();
+      if (workspaceId && currentAccount) void deleteAutomationRuleRemote(workspaceId, button.dataset.ruleId).catch(() => {});
+      automations = { ...automations, rules: (automations.rules || []).filter((rule) => rule.id !== button.dataset.ruleId) };
+      saveSetting("automations", automations); renderProductivityHub();
+      break;
+    }
+    case "focus-search": searchInput.focus(); searchInput.scrollIntoView({ behavior: "smooth", block: "center" }); break;
     case "close-productivity-hub": productivityDialog.close(); break;
     case "show-board": setView("board"); break;
     case "show-calendar": setView("calendar"); break;
+    case "mobile-show-board": setView("board"); break;
+    case "mobile-show-calendar": setView("calendar"); break;
     case "close-task-dialog": taskDialog.close(); break;
     case "edit-task": openEditDialog(taskId); break;
     case "delete-task": openDeleteDialog(taskId); break;
@@ -1824,6 +1972,23 @@ document.addEventListener("click", (event) => {
       pendingAttachments = pendingAttachments.filter((attachment) => attachment.id !== button.dataset.attachmentId);
       renderAttachmentEditor();
       break;
+    case "attachment-history":
+      void listAttachmentVersions(button.dataset.attachmentId).then((versions) => {
+        showNotification(versions.map((item) => `v${item.version} ${item.name}`).join(" · ") || "No versions");
+      }).catch(() => showNotification(t("account.error"), "error"));
+      break;
+    case "replace-attachment": {
+      const picker = document.createElement("input"); picker.type = "file";
+      picker.addEventListener("change", () => {
+        const file = picker.files[0]; if (!file) return;
+        void replaceAttachmentVersion(button.dataset.attachmentId, file).then(() => {
+          const item = pendingAttachments.find((attachment) => attachment.id === button.dataset.attachmentId);
+          if (item) Object.assign(item, { name: file.name, size: file.size, type: file.type });
+          renderAttachmentEditor(); showNotification(t("notice.taskUpdated"));
+        }).catch(() => showNotification(t("account.error"), "error"));
+      });
+      picker.click(); break;
+    }
     case "track-time": {
       const task = getTaskById(taskId);
       if (!task) break;
@@ -2071,6 +2236,48 @@ document.querySelectorAll("[data-automation]").forEach((input) => {
   });
 });
 
+document.querySelectorAll("[data-oauth-provider]").forEach((button) => {
+  button.addEventListener("click", () => void startOAuth(button.dataset.oauthProvider).catch((error) => showNotification(error.message, "error")));
+});
+
+document.querySelectorAll("[data-dashboard-widget]").forEach((input) => {
+  input.addEventListener("change", () => {
+    dashboardPreferences = { ...dashboardPreferences, [input.dataset.dashboardWidget]: input.checked };
+    saveSetting("dashboard", dashboardPreferences); renderDashboard();
+  });
+});
+
+document.querySelectorAll("[data-sync-resolution]").forEach((button) => {
+  button.addEventListener("click", () => void resolveSyncConflict(button.dataset.syncResolution).then((workspace) => {
+    syncConflictDialog.close();
+    if (button.dataset.syncResolution === "remote" && workspace) applyRemoteWorkspace(workspace);
+  }));
+});
+
+window.addEventListener("flowboard:sync", (event) => {
+  const labels = { queued: "◌ Queued", syncing: "↻ Syncing", synced: "● Synced", offline: "○ Offline", conflict: "! Conflict" };
+  syncStatus.dataset.state = event.detail.status;
+  syncStatus.textContent = labels[event.detail.status] || "● Local";
+  if (event.detail.status === "conflict" && !syncConflictDialog.open) syncConflictDialog.showModal();
+});
+
+let touchStart = null;
+board.addEventListener("touchstart", (event) => {
+  const card = event.target.closest(".task-card");
+  if (card && event.touches.length === 1) touchStart = { x: event.touches[0].clientX, y: event.touches[0].clientY, taskId: card.dataset.taskId };
+}, { passive: true });
+board.addEventListener("touchend", (event) => {
+  if (!touchStart || !event.changedTouches.length) return;
+  const dx = event.changedTouches[0].clientX - touchStart.x;
+  const dy = event.changedTouches[0].clientY - touchStart.y;
+  if (Math.abs(dx) > 80 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+    const task = getTaskById(touchStart.taskId); const index = columns.findIndex((column) => column.id === task?.status);
+    const target = columns[index + (dx > 0 ? 1 : -1)];
+    if (task && target) { rememberState("action.move"); moveTask(task.id, target.id); commitChanges(t("notice.taskMoved")); }
+  }
+  touchStart = null;
+}, { passive: true });
+
 calendarMonth.addEventListener("change", () => {
   renderCalendar(getBoardTasks(), calendarMonth.value, openEditDialog);
 });
@@ -2218,6 +2425,7 @@ automations = {
   ...defaultAutomations,
   ...(loadSetting("automations", {}) || {}),
 };
+dashboardPreferences = { ...dashboardPreferences, ...(loadSetting("dashboard", {}) || {}) };
 goals = Array.isArray(loadSetting("goals", [])) ? loadSetting("goals", []) : [];
 calendarMonth.value = todayMonth();
 const language = loadSetting("language", "ru");
@@ -2234,5 +2442,6 @@ applyAccessibility();
 updateUndoButton();
 refreshBoard();
 renderAccountPanel();
+completeOAuthLogin();
 window.setInterval(checkDeadlineReminders, 60 * 60 * 1000);
 void refreshAccount().then(() => initializeRemoteWorkspace());

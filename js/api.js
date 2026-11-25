@@ -4,6 +4,7 @@ const SYNC_QUEUE_KEY = "flowboard-api-sync-queue";
 const REVISION_KEY = "flowboard-api-revision";
 const CLIENT_ID_KEY = "flowboard-api-client-id";
 const ACTIVE_WORKSPACE_KEY = "flowboard-active-workspace";
+const SYNC_CONFLICT_KEY = "flowboard-api-sync-conflict";
 
 let syncTimer = null;
 let socket = null;
@@ -73,6 +74,53 @@ async function apiRequest(path, options = {}) {
     throw error;
   }
   if (response.status === 204) return null;
+  return response.json();
+}
+
+function syncEvent(status, detail = {}) {
+  globalThis.dispatchEvent?.(new CustomEvent("flowboard:sync", { detail: { status, ...detail } }));
+}
+
+export function completeOAuthLogin() {
+  const params = new URLSearchParams(location.hash.replace(/^#/, ""));
+  const token = params.get("oauthToken");
+  if (token) {
+    storageSet(API_TOKEN_KEY, token);
+    history.replaceState(null, "", `${location.pathname}${location.search}`);
+    return true;
+  }
+  return false;
+}
+
+export async function startOAuth(provider) {
+  const result = await apiRequest(`/auth/oauth/${encodeURIComponent(provider)}/start`);
+  location.assign(result.url);
+}
+
+export function listBackups(workspaceId) { return apiRequest(`/workspaces/${encodeURIComponent(workspaceId)}/backups`); }
+export function createBackup(workspaceId, name = "Manual backup") {
+  return apiRequest(`/workspaces/${encodeURIComponent(workspaceId)}/backups`, { method: "POST", body: JSON.stringify({ name }) });
+}
+export function restoreBackup(workspaceId, backupId) {
+  return apiRequest(`/workspaces/${encodeURIComponent(workspaceId)}/backups/${encodeURIComponent(backupId)}/restore`, { method: "POST" });
+}
+export function downloadBackup(workspaceId, backupId) {
+  return apiRequest(`/workspaces/${encodeURIComponent(workspaceId)}/backups/${encodeURIComponent(backupId)}`);
+}
+export function getNotificationSchedule() { return apiRequest("/notification-schedule"); }
+export function setNotificationSchedule(payload) { return apiRequest("/notification-schedule", { method: "PUT", body: JSON.stringify(payload) }); }
+export function listAutomationRules(workspaceId) { return apiRequest(`/automation-rules?workspaceId=${encodeURIComponent(workspaceId)}`); }
+export function createAutomationRuleRemote(payload) { return apiRequest("/automation-rules", { method: "POST", body: JSON.stringify(payload) }); }
+export function deleteAutomationRuleRemote(workspaceId, ruleId) { return apiRequest(`/automation-rules/${encodeURIComponent(ruleId)}?workspaceId=${encodeURIComponent(workspaceId)}`, { method: "DELETE" }); }
+export function listAttachmentVersions(attachmentId) { return apiRequest(`/attachments/${encodeURIComponent(attachmentId)}/versions`); }
+export async function replaceAttachmentVersion(attachmentId, file) {
+  const base = getApiBaseUrl();
+  const token = storageGet(API_TOKEN_KEY);
+  const form = new FormData(); form.append("file", file);
+  const response = await fetch(`${base}/attachments/${encodeURIComponent(attachmentId)}/versions`, {
+    method: "POST", headers: token ? { Authorization: `Bearer ${token}` } : {}, body: form,
+  });
+  if (!response.ok) throw new Error(`API ${response.status}`);
   return response.json();
 }
 
@@ -363,6 +411,7 @@ export async function syncWorkspace(workspace) {
   const base = getApiBaseUrl();
   if (!base) return null;
   storageSet(SYNC_QUEUE_KEY, JSON.stringify(workspace));
+  syncEvent(navigator.onLine === false ? "offline" : "syncing");
   let revision = getRemoteRevision();
   let payload = { ...workspace, revision };
   const workspaceId = getActiveWorkspaceId();
@@ -379,26 +428,41 @@ export async function syncWorkspace(workspace) {
     } catch (error) {
       if (error.status !== 409) throw error;
       const current = await apiRequest(path);
-      payload = mergeWorkspaceForConflict(workspace, current);
-      revision = current.revision || 0;
-      remote = await apiRequest(path, {
-        method: "PUT",
-        headers: { "If-Match": `"${revision}"`, ...workspaceHeaders },
-        body: JSON.stringify(payload),
-      });
+      storageSet(SYNC_CONFLICT_KEY, JSON.stringify({ local: workspace, remote: current }));
+      syncEvent("conflict", { local: workspace, remote: current });
+      return null;
     }
     if (!workspaceId) await uploadMissingAttachments(workspace, remote);
     storageSet(REVISION_KEY, String(remote.revision || 0));
     if (typeof localStorage !== "undefined") localStorage.removeItem(SYNC_QUEUE_KEY);
+    syncEvent("synced", { revision: remote.revision || 0 });
     return remote;
   } catch {
+    syncEvent(navigator.onLine === false ? "offline" : "queued");
     return null;
   }
+}
+
+export async function resolveSyncConflict(strategy = "merge") {
+  const raw = storageGet(SYNC_CONFLICT_KEY);
+  if (!raw) return null;
+  const conflict = JSON.parse(raw);
+  if (strategy === "remote") {
+    storageSet(REVISION_KEY, String(conflict.remote.revision || 0));
+    storageRemove(SYNC_QUEUE_KEY); storageRemove(SYNC_CONFLICT_KEY);
+    syncEvent("synced", { workspace: conflict.remote });
+    return conflict.remote;
+  }
+  const payload = strategy === "local" ? conflict.local : mergeWorkspaceForConflict(conflict.local, conflict.remote);
+  storageSet(REVISION_KEY, String(conflict.remote.revision || 0));
+  storageRemove(SYNC_CONFLICT_KEY);
+  return syncWorkspace(payload);
 }
 
 export function scheduleWorkspaceSync(workspace, delay = 500) {
   if (!getApiBaseUrl()) return;
   clearTimeout(syncTimer);
+  syncEvent(navigator.onLine === false ? "offline" : "queued");
   syncTimer = setTimeout(() => { void syncWorkspace(workspace); }, delay);
 }
 

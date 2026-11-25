@@ -31,6 +31,13 @@ class Settings:
     webauthn_origin: str = "http://localhost:4173"
     vapid_public_key: str = ""
     vapid_private_key: str = ""
+    api_public_url: str = "http://localhost:8000/api/v1"
+    oauth_google_client_id: str = ""
+    oauth_google_client_secret: str = ""
+    oauth_github_client_id: str = ""
+    oauth_github_client_secret: str = ""
+    oauth_microsoft_client_id: str = ""
+    oauth_microsoft_client_secret: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -64,5 +71,12 @@ class Settings:
             webauthn_origin=os.getenv("FLOWBOARD_WEBAUTHN_ORIGIN", os.getenv("FLOWBOARD_PUBLIC_APP_URL", "http://localhost:4173")).rstrip("/"),
             vapid_public_key=os.getenv("FLOWBOARD_VAPID_PUBLIC_KEY", ""),
             vapid_private_key=os.getenv("FLOWBOARD_VAPID_PRIVATE_KEY", ""),
+            api_public_url=os.getenv("FLOWBOARD_API_PUBLIC_URL", "http://localhost:8000/api/v1").rstrip("/"),
+            oauth_google_client_id=os.getenv("FLOWBOARD_GOOGLE_CLIENT_ID", ""),
+            oauth_google_client_secret=os.getenv("FLOWBOARD_GOOGLE_CLIENT_SECRET", ""),
+            oauth_github_client_id=os.getenv("FLOWBOARD_GITHUB_CLIENT_ID", ""),
+            oauth_github_client_secret=os.getenv("FLOWBOARD_GITHUB_CLIENT_SECRET", ""),
+            oauth_microsoft_client_id=os.getenv("FLOWBOARD_MICROSOFT_CLIENT_ID", ""),
+            oauth_microsoft_client_secret=os.getenv("FLOWBOARD_MICROSOFT_CLIENT_SECRET", ""),
         )
 

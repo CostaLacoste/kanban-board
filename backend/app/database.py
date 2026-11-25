@@ -430,6 +430,82 @@ class Database:
                 );
                 CREATE INDEX IF NOT EXISTS collaboration_operations_task_idx
                     ON collaboration_operations(task_id,lamport,created_at);
+                CREATE TABLE IF NOT EXISTS workspace_backups (
+                    id TEXT PRIMARY KEY,
+                    workspace_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS workspace_backups_idx ON workspace_backups(workspace_id,created_at);
+                CREATE TABLE IF NOT EXISTS automation_rules (
+                    id TEXT PRIMARY KEY,
+                    workspace_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    trigger_name TEXT NOT NULL,
+                    trigger_value TEXT NOT NULL DEFAULT '',
+                    action_name TEXT NOT NULL,
+                    action_value TEXT NOT NULL DEFAULT '',
+                    active INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS notification_schedules (
+                    user_id TEXT PRIMARY KEY,
+                    lead_minutes INTEGER NOT NULL DEFAULT 60,
+                    digest_frequency TEXT NOT NULL DEFAULT 'daily',
+                    digest_hour INTEGER NOT NULL DEFAULT 9,
+                    timezone TEXT NOT NULL DEFAULT 'UTC',
+                    last_digest_at TEXT,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS scheduled_notification_deliveries (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    scheduled_for TEXT NOT NULL,
+                    delivered_at TEXT NOT NULL,
+                    UNIQUE(user_id,task_id,kind,scheduled_for),
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS oauth_states (
+                    id TEXT PRIMARY KEY,
+                    provider TEXT NOT NULL,
+                    state_hash TEXT NOT NULL UNIQUE,
+                    code_verifier TEXT NOT NULL,
+                    redirect_uri TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS oauth_accounts (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    provider_user_id TEXT NOT NULL,
+                    email TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(provider,provider_user_id),
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS attachment_versions (
+                    id TEXT PRIMARY KEY,
+                    attachment_id TEXT NOT NULL,
+                    version INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    media_type TEXT NOT NULL,
+                    size INTEGER NOT NULL,
+                    content BLOB NOT NULL,
+                    storage_key TEXT,
+                    checksum TEXT,
+                    created_by TEXT,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(attachment_id,version),
+                    FOREIGN KEY (attachment_id) REFERENCES attachments(id) ON DELETE CASCADE
+                );
                 CREATE TABLE IF NOT EXISTS schema_migrations (
                     version INTEGER PRIMARY KEY,
                     applied_at TEXT NOT NULL
@@ -447,6 +523,9 @@ class Database:
             )
             connection.execute(
                 "INSERT INTO schema_migrations(version,applied_at) VALUES (4,?) ON CONFLICT(version) DO NOTHING", (utc_now(),)
+            )
+            connection.execute(
+                "INSERT INTO schema_migrations(version,applied_at) VALUES (5,?) ON CONFLICT(version) DO NOTHING", (utc_now(),)
             )
             connection.execute(
                 "INSERT INTO boards(id, name, created_at) VALUES (?, ?, ?) ON CONFLICT(id) DO NOTHING",

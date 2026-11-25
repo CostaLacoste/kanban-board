@@ -15,7 +15,7 @@
     <link rel="shortcut icon" href="./favicon.ico?v=2" type="image/x-icon" />
     <link rel="mask-icon" href="./assets/icons/safari-pinned-tab.svg?v=2" color="#7c4dff" />
     <link rel="apple-touch-icon" href="./assets/icons/flowboard-mark-192.png?v=2" sizes="192x192" />
-    <link rel="stylesheet" href="./css/style.css?v=9" />
+    <link rel="stylesheet" href="./css/style.css?v=10" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <script type="module" src="./js/main.js"></script>
   </head>
@@ -74,6 +74,7 @@
 
     <main class="app-shell">
       <section class="workspace-bar" aria-label="Управление досками и данными">
+        <output class="sync-status" data-sync-status data-state="local" aria-live="polite">● Локально</output>
         <label class="workspace-bar__board" data-cloud-workspace-control hidden>
           <span data-i18n="platform.workspace">Пространство</span>
           <select id="cloud-workspace-select" aria-label="Облачное рабочее пространство"></select>
@@ -185,6 +186,8 @@
             autocomplete="off"
           />
         </label>
+
+        <small class="search-syntax" data-i18n="feature.searchHelp">status:todo priority:high tag:design assignee:me due:overdue</small>
 
         <label class="select-field">
           <span class="visually-hidden">Фильтр по приоритету</span>
@@ -618,6 +621,17 @@
             <p class="eyebrow" data-i18n="security.title">Безопасность</p>
             <div class="security-status" data-security-status></div>
             <div class="hub-actions"><button class="secondary-button" type="button" data-action="setup-totp" data-i18n="security.setupTotp">Настроить 2FA</button><button class="secondary-button" type="button" data-action="register-passkey" data-i18n="security.addPasskey">Добавить Passkey</button><button class="secondary-button" type="button" data-action="verify-email" data-i18n="security.verifyEmail">Подтвердить email</button><button class="secondary-button" type="button" data-action="enable-push" data-i18n="security.enablePush">Включить push</button></div>
+            <div class="hub-actions oauth-actions"><button class="mini-button" type="button" data-oauth-provider="google">Google</button><button class="mini-button" type="button" data-oauth-provider="github">GitHub</button><button class="mini-button" type="button" data-oauth-provider="microsoft">Microsoft</button></div>
+          </section>
+          <section class="hub-card">
+            <p class="eyebrow" data-i18n="feature.import">Импорт</p>
+            <h3 data-i18n="feature.importTitle">Trello, Jira и Notion</h3>
+            <div class="inline-field"><select id="external-import-provider"><option value="trello">Trello</option><option value="jira">Jira</option><option value="notion">Notion</option></select><input id="external-import-file" type="file" accept="application/json,.json" /><button class="secondary-button" type="button" data-action="import-external" data-i18n="workspace.import">Импорт</button></div>
+          </section>
+          <section class="hub-card">
+            <p class="eyebrow" data-i18n="feature.backups">Резервные копии</p>
+            <div class="hub-actions"><button class="secondary-button" type="button" data-action="create-cloud-backup" data-i18n="hub.create">Создать</button></div>
+            <div class="account-members" data-backup-list></div>
           </section>
           <section class="hub-card">
             <p class="eyebrow" data-i18n="platform.integrations">Интеграции</p>
@@ -664,6 +678,12 @@
           </select>
           <button class="secondary-button" type="button" data-action="read-all-notifications" data-i18n="notifications.readAll">Прочитать все</button>
         </div>
+        <section class="notification-schedule">
+          <label><span data-i18n="feature.remindBefore">Напомнить за, мин.</span><input id="notification-lead" type="number" min="0" max="10080" value="60" /></label>
+          <label><span data-i18n="feature.digest">Дайджест</span><select id="notification-digest"><option value="off">Off</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
+          <label><span data-i18n="feature.hour">Час</span><input id="notification-hour" type="number" min="0" max="23" value="9" /></label>
+          <button class="secondary-button" type="button" data-action="save-notification-schedule" data-i18n="task.save">Сохранить</button>
+        </section>
         <div class="notification-list" data-notification-list></div>
       </div>
     </dialog>
@@ -749,6 +769,21 @@
             <label class="toggle-row"><input type="checkbox" data-automation="overdueHigh" /> <span data-i18n="automation.overdueHigh">Просроченным — высокий приоритет</span></label>
             <label class="toggle-row"><input type="checkbox" data-automation="checklistDone" /> <span data-i18n="automation.checklistDone">Готовый чек-лист завершает задачу</span></label>
             <label class="toggle-row"><input type="checkbox" data-automation="dueTodayTag" /> <span data-i18n="automation.dueTodayTag">Добавлять тег today в день срока</span></label>
+            <div class="rule-builder">
+              <input id="rule-name" maxlength="100" data-i18n-placeholder="feature.ruleName" placeholder="Название правила" />
+              <select id="rule-trigger"><option value="overdue">overdue</option><option value="dueToday">due today</option><option value="status">status</option><option value="priority">priority</option><option value="tag">tag</option></select>
+              <input id="rule-trigger-value" data-i18n-placeholder="feature.value" placeholder="Значение" />
+              <select id="rule-action"><option value="setPriority">set priority</option><option value="setStatus">set status</option><option value="addTag">add tag</option></select>
+              <input id="rule-action-value" data-i18n-placeholder="feature.value" placeholder="Значение" />
+              <button class="secondary-button" type="button" data-action="add-automation-rule">+</button>
+            </div>
+            <div class="account-members" data-automation-rules></div>
+          </section>
+
+          <section class="hub-card hub-card--wide">
+            <p class="eyebrow" data-i18n="feature.dashboard">Дашборд</p>
+            <div class="dashboard-settings"><label><input type="checkbox" data-dashboard-widget="overview" checked /> Overview</label><label><input type="checkbox" data-dashboard-widget="deadlines" checked /> Deadlines</label><label><input type="checkbox" data-dashboard-widget="workload" checked /> Workload</label><label><input type="checkbox" data-dashboard-widget="goals" checked /> Goals</label></div>
+            <div class="dashboard-widgets" data-dashboard-widgets></div>
           </section>
 
           <section class="hub-card">
@@ -817,6 +852,10 @@
       </div>
     </dialog>
 
+    <dialog id="sync-conflict-dialog" class="dialog dialog--small" aria-labelledby="sync-conflict-title">
+      <div class="dialog__content"><div><p class="eyebrow">SYNC / CONFLICT</p><h2 id="sync-conflict-title" data-i18n="feature.conflict">Конфликт изменений</h2><p data-i18n="feature.conflictHelp">Выберите, какую версию сохранить.</p></div><div class="dialog__actions"><button class="secondary-button" type="button" data-sync-resolution="remote" data-i18n="feature.remote">Облачная</button><button class="secondary-button" type="button" data-sync-resolution="local" data-i18n="feature.local">Локальная</button><button class="primary-button" type="button" data-sync-resolution="merge" data-i18n="feature.merge">Объединить</button></div></div>
+    </dialog>
+
     <template id="task-card-template">
       <article class="task-card" draggable="true">
         <label class="task-card__select"><input type="checkbox" data-action="select-task" /><span data-i18n="batch.select">Выбрать</span></label>
@@ -878,6 +917,8 @@
     <button class="archive-fab" type="button" data-action="open-archive">
       <span data-i18n="column.archive">Архив</span> <span id="archive-count">0</span>
     </button>
+
+    <nav class="mobile-nav" aria-label="Mobile navigation"><button type="button" data-action="mobile-show-board" data-i18n="view.board">Доска</button><button type="button" data-action="mobile-show-calendar" data-i18n="view.calendar">Календарь</button><button class="mobile-nav__new" type="button" data-action="mobile-new-task">＋</button><button type="button" data-action="focus-search">⌕</button><button type="button" data-action="mobile-open-hub" data-i18n="app.hub">Центр</button></nav>
 
     <p class="keyboard-help" data-i18n="app.shortcuts">
       <kbd>N</kbd> новая задача · <kbd>/</kbd> поиск · <kbd>⌘/Ctrl+Z</kbd> отмена ·

@@ -36,6 +36,7 @@ uv run fastapi dev app/main.py
 - `POST /api/v1/tasks/{id}/timer/start|stop`;
 - `POST /api/v1/tasks/{id}/attachments`;
 - `GET/DELETE /api/v1/attachments/{id}`;
+- `GET/POST /api/v1/attachments/{id}/versions`;
 - `GET/PUT /api/v1/automations`;
 - `GET/PUT /api/v1/workspace`;
 - `GET/POST /api/v1/workspaces` и `GET/PUT /workspaces/{id}/snapshot`;
@@ -45,6 +46,9 @@ uv run fastapi dev app/main.py
 - `/api/v1/push/*`, `/api/v1/integrations` и GitHub webhook;
 - `/api/v1/custom-fields`, `/api/v1/public-shares` и `/api/v1/public/{token}`;
 - `/api/v1/collaboration/operations` и `/api/v1/assistant`;
+- `/api/v1/workspaces/{id}/backups` и `/api/v1/automation-rules`;
+- `GET/PUT /api/v1/notification-schedule`;
+- `/api/v1/auth/oauth/{google|github|microsoft}/*`;
 - `POST /api/v1/auth/register|login` и `GET /api/v1/auth/me`;
 - `GET/PUT /api/v1/members` и управление API-токенами;
 - `GET/POST /api/v1/invitations` и `GET/DELETE /api/v1/auth/sessions`;
@@ -99,6 +103,18 @@ Compose запускает отдельный PostgreSQL 17 и ожидает е
 Для Passkeys укажите `FLOWBOARD_WEBAUTHN_RP_ID` и
 `FLOWBOARD_WEBAUTHN_ORIGIN`. Для push-уведомлений нужны
 `FLOWBOARD_VAPID_PUBLIC_KEY` и `FLOWBOARD_VAPID_PRIVATE_KEY`.
+
+Для входа через Google, GitHub или Microsoft задайте соответствующие пары
+`FLOWBOARD_*_CLIENT_ID` / `FLOWBOARD_*_CLIENT_SECRET`, а также публичные
+`FLOWBOARD_PUBLIC_APP_URL` и `FLOWBOARD_API_PUBLIC_URL`. Callback URL имеет вид
+`FLOWBOARD_API_PUBLIC_URL/auth/oauth/<provider>/callback`. Секреты используются
+только FastAPI и не передаются в браузер.
+
+В интерфейсе платформы доступны импорт Trello/Jira/Notion, резервные копии
+пространства и OAuth. В центре продуктивности находятся настраиваемый дашборд
+и конструктор автоматизаций. Поиск поддерживает операторы `status:`,
+`priority:`, `tag:`, `assignee:me`, `board:` и `due:` (`today`, `this-week`,
+`overdue`).
 
 ## Перенос SQLite в PostgreSQL
 

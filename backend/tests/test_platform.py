@@ -128,3 +128,40 @@ def test_github_webhook_creates_a_task(client: TestClient) -> None:
         f"/api/v1/workspaces/{workspace['id']}/snapshot", headers=headers,
     ).json()
     assert snapshot["tasks"][0]["title"] == "Fix sync"
+
+
+def test_backups_automation_rules_notification_schedule_and_oauth_config(client: TestClient) -> None:
+    account = register_user(client, "workflow-owner@example.com", "Workflow Owner")
+    headers = auth_headers(account["accessToken"])
+    workspace = first_workspace(client, account["accessToken"])
+    workspace_id = workspace["id"]
+
+    backup = client.post(
+        f"/api/v1/workspaces/{workspace_id}/backups", headers=headers, json={"name": "Before release"},
+    )
+    assert backup.status_code == 201
+    backups = client.get(f"/api/v1/workspaces/{workspace_id}/backups", headers=headers).json()
+    assert backups[0]["name"] == "Before release"
+    assert client.get(
+        f"/api/v1/workspaces/{workspace_id}/backups/{backup.json()['id']}", headers=headers,
+    ).status_code == 200
+    assert client.post(
+        f"/api/v1/workspaces/{workspace_id}/backups/{backup.json()['id']}/restore", headers=headers,
+    ).status_code == 200
+
+    rule = client.post("/api/v1/automation-rules", headers=headers, json={
+        "workspaceId": workspace_id, "name": "Urgent", "trigger": "overdue",
+        "action": "setPriority", "actionValue": "high",
+    })
+    assert rule.status_code == 201
+    assert client.get(f"/api/v1/automation-rules?workspaceId={workspace_id}", headers=headers).json()[0]["name"] == "Urgent"
+    assert client.delete(
+        f"/api/v1/automation-rules/{rule.json()['id']}?workspaceId={workspace_id}", headers=headers,
+    ).status_code == 204
+
+    schedule = client.put("/api/v1/notification-schedule", headers=headers, json={
+        "leadMinutes": 120, "digestFrequency": "weekly", "digestHour": 8, "timezone": "Europe/Moscow",
+    })
+    assert schedule.status_code == 200
+    assert client.get("/api/v1/notification-schedule", headers=headers).json()["digestFrequency"] == "weekly"
+    assert client.get("/api/v1/auth/oauth/google/start").status_code == 503

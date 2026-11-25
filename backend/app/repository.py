@@ -554,6 +554,46 @@ class Repository:
             cursor = connection.execute("DELETE FROM attachments WHERE id = ?", (attachment_id,))
         return cursor.rowcount > 0
 
+    def add_attachment_version(
+        self, attachment_id: str, name: str, media_type: str, content: bytes, created_by: str | None = None,
+    ) -> dict[str, Any] | None:
+        with self.database._lock, self.database.connect() as connection:
+            attachment = connection.execute("SELECT 1 FROM attachments WHERE id=?", (attachment_id,)).fetchone()
+            if attachment is None:
+                return None
+            row = connection.execute(
+                "SELECT COALESCE(MAX(version),0)+1 AS next_version FROM attachment_versions WHERE attachment_id=?",
+                (attachment_id,),
+            ).fetchone()
+            version = int(row["next_version"])
+            item = {"id": str(uuid4()), "attachmentId": attachment_id, "version": version, "name": name,
+                    "type": media_type, "size": len(content), "createdBy": created_by, "createdAt": utc_now()}
+            connection.execute(
+                "INSERT INTO attachment_versions(id,attachment_id,version,name,media_type,size,content,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                (item["id"], attachment_id, version, name, media_type, len(content), content, created_by, item["createdAt"]),
+            )
+            connection.execute(
+                "UPDATE attachments SET name=?,media_type=?,size=?,content=? WHERE id=?",
+                (name, media_type, len(content), content, attachment_id),
+            )
+        return item
+
+    def list_attachment_versions(self, attachment_id: str) -> list[dict[str, Any]]:
+        with self.database._lock, self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT id,attachment_id,version,name,media_type,size,created_by,created_at FROM attachment_versions WHERE attachment_id=? ORDER BY version DESC",
+                (attachment_id,),
+            ).fetchall()
+        return [{"id": row["id"], "attachmentId": row["attachment_id"], "version": row["version"],
+                 "name": row["name"], "type": row["media_type"], "size": row["size"],
+                 "createdBy": row["created_by"], "createdAt": row["created_at"]} for row in rows]
+
+    def get_attachment_version(self, attachment_id: str, version_id: str) -> sqlite3.Row | None:
+        with self.database._lock, self.database.connect() as connection:
+            return connection.execute(
+                "SELECT * FROM attachment_versions WHERE id=? AND attachment_id=?", (version_id, attachment_id)
+            ).fetchone()
+
     def get_automations(self) -> dict[str, Any]:
         return self.database.get_setting(
             "automations", AutomationSettings().model_dump(by_alias=True, mode="json")

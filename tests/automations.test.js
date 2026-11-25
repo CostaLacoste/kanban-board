@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { applyAutomations } from "../js/automations.js";
+import { applyAutomations, createAutomationRule } from "../js/automations.js";
 
 const now = new Date("2026-11-15T12:00:00.000Z");
 
@@ -31,4 +31,11 @@ test("добавляет тег today один раз в день срока", (
 
   assert.deepEqual(second.tasks[0].tags, ["today"]);
   assert.equal(second.changed, false);
+});
+
+test("выполняет пользовательское правило конструктора", () => {
+  const rule = createAutomationRule({ name: "Urgent review", trigger: "status", triggerValue: "progress", action: "addTag", actionValue: "review" });
+  const result = applyAutomations([{ id: "1", status: "progress", priority: "medium", tags: [], checklist: [] }], { rules: [rule] }, now);
+  assert.deepEqual(result.tasks[0].tags, ["review"]);
+  assert.equal(result.changed, true);
 });

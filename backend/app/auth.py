@@ -143,6 +143,38 @@ class AuthService:
             return None
         return self._user_dict(row), self.issue_token(row["id"], user_agent, ip_address)
 
+    def oauth_login(
+        self, provider: str, provider_user_id: str, email: str, name: str,
+        user_agent: str = "unknown", ip_address: str = "unknown",
+    ) -> tuple[dict[str, Any], str]:
+        email = email.lower().strip()
+        with self.database._lock, self.database.connect() as connection:
+            linked = connection.execute(
+                "SELECT user_id FROM oauth_accounts WHERE provider=? AND provider_user_id=?",
+                (provider, provider_user_id),
+            ).fetchone()
+            user_id = linked["user_id"] if linked else None
+            if not user_id:
+                existing = connection.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone()
+                user_id = existing["id"] if existing else str(uuid4())
+                if not existing:
+                    created_at = utc_now()
+                    count = connection.execute("SELECT COUNT(*) AS count FROM users").fetchone()["count"]
+                    role = "owner" if count == 0 else "editor"
+                    connection.execute(
+                        "INSERT INTO users(id,email,name,password_hash,created_at) VALUES (?,?,?,?,?)",
+                        (user_id, email, name or email.split("@", 1)[0], hash_password(secrets.token_urlsafe(48)), created_at),
+                    )
+                    connection.execute(
+                        "INSERT INTO workspace_members(user_id,role,created_at) VALUES (?,?,?)",
+                        (user_id, role, created_at),
+                    )
+                connection.execute(
+                    "INSERT INTO oauth_accounts(id,user_id,provider,provider_user_id,email,created_at) VALUES (?,?,?,?,?,?)",
+                    (str(uuid4()), user_id, provider, provider_user_id, email, utc_now()),
+                )
+        return self.get_user(user_id), self.issue_token(user_id, user_agent, ip_address)
+
     @staticmethod
     def _user_dict(row: Any) -> dict[str, Any]:
         return {

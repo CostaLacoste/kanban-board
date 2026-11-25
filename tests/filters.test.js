@@ -57,4 +57,14 @@ describe("фильтрация задач", () => {
     });
     assert.deepEqual(result.map((task) => task.id), ["1"]);
   });
+
+  test("понимает расширенный поисковый запрос", () => {
+    const result = filterTasks(tasks, "priority:high tag:релиз assignee:me", "all", "all", { currentUser: "Анна" });
+    assert.deepEqual(result.map((task) => task.id), ["1"]);
+  });
+
+  test("фильтрует просроченные задачи через due:overdue", () => {
+    const result = filterTasks(tasks, "due:overdue", "all", "all", { now: new Date("2030-06-01T12:00:00Z") });
+    assert.deepEqual(result.map((task) => task.id), ["1"]);
+  });
 });

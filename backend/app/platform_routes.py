@@ -9,13 +9,16 @@ from typing import Annotated, Any
 import httpx
 
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Query, Request, Response
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse
+from urllib.parse import quote
 
 from .auth import Actor, AuthService
 from .config import Settings
 from .integrations import process_jobs, send_email
 from .platform import PlatformService
 from .platform_models import (
+    AutomationRuleCreate,
+    BackupCreate,
     AssistantRequest,
     BoardPermissionUpdate,
     CollaborationOperation,
@@ -30,6 +33,7 @@ from .platform_models import (
     PublicShareCreate,
     PushSubscriptionCreate,
     TotpVerify,
+    NotificationScheduleUpdate,
     WorkspaceCreate,
     WorkspaceMemberUpdate,
 )
@@ -210,6 +214,22 @@ def create_platform_router(
         token = auth.issue_token(user_id, *identity(request))
         return {"accessToken": token, "tokenType": "bearer", "user": user}
 
+    @router.get("/auth/oauth/{provider}/start", tags=["security"])
+    def oauth_start(provider: str) -> dict[str, str]:
+        try:
+            return {"url": platform.oauth_start(provider)}
+        except RuntimeError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
+    @router.get("/auth/oauth/{provider}/callback", tags=["security"])
+    async def oauth_callback(provider: str, state: str, code: str, request: Request) -> RedirectResponse:
+        try:
+            profile = await platform.oauth_profile(provider, state, code)
+            user, token = auth.oauth_login(provider, profile["providerUserId"], profile["email"], profile["name"], *identity(request))
+        except (ValueError, RuntimeError, httpx.HTTPError) as error:
+            return RedirectResponse(f"{settings.public_app_url}/#oauthError={quote(str(error))}", status_code=302)
+        return RedirectResponse(f"{settings.public_app_url}/#oauthToken={quote(token)}", status_code=302)
+
     @router.get("/workspaces/{workspace_id}/audit", tags=["security"])
     def audit_log(workspace_id: str, request: Request, limit: int = Query(100, ge=1, le=500)) -> list[dict[str, Any]]:
         _, role = workspace_actor(request, workspace_id)
@@ -365,5 +385,56 @@ def create_platform_router(
         if data.workspace_id:
             workspace_actor(request, data.workspace_id)
         return platform.assistant(data.action, data.text, data.task, data.workspace_id)
+
+    @router.get("/workspaces/{workspace_id}/backups", tags=["backups"])
+    def list_backups(workspace_id: str, request: Request) -> list[dict[str, Any]]:
+        workspace_actor(request, workspace_id)
+        return platform.list_backups(workspace_id)
+
+    @router.post("/workspaces/{workspace_id}/backups", status_code=201, tags=["backups"])
+    def create_backup(workspace_id: str, data: BackupCreate, request: Request) -> dict[str, Any]:
+        actor, _ = workspace_actor(request, workspace_id, write=True)
+        return platform.create_backup(workspace_id, actor.id, data.name)
+
+    @router.get("/workspaces/{workspace_id}/backups/{backup_id}", tags=["backups"])
+    def download_backup(workspace_id: str, backup_id: str, request: Request) -> dict[str, Any]:
+        workspace_actor(request, workspace_id)
+        backup = platform.get_backup(workspace_id, backup_id)
+        if backup is None:
+            raise HTTPException(status_code=404, detail="Backup not found")
+        return backup
+
+    @router.post("/workspaces/{workspace_id}/backups/{backup_id}/restore", tags=["backups"])
+    def restore_backup(workspace_id: str, backup_id: str, request: Request) -> dict[str, Any]:
+        workspace_actor(request, workspace_id, write=True)
+        snapshot = platform.restore_backup(workspace_id, backup_id)
+        if snapshot is None:
+            raise HTTPException(status_code=404, detail="Backup not found")
+        return snapshot
+
+    @router.get("/automation-rules", tags=["automations"])
+    def automation_rules(request: Request, workspace_id: str = Query(alias="workspaceId")) -> list[dict[str, Any]]:
+        workspace_actor(request, workspace_id)
+        return platform.list_automation_rules(workspace_id)
+
+    @router.post("/automation-rules", status_code=201, tags=["automations"])
+    def create_automation_rule(data: AutomationRuleCreate, request: Request) -> dict[str, Any]:
+        workspace_actor(request, data.workspace_id, write=True)
+        return platform.create_automation_rule(data.workspace_id, data)
+
+    @router.delete("/automation-rules/{rule_id}", status_code=204, tags=["automations"])
+    def delete_automation_rule(rule_id: str, request: Request, workspace_id: str = Query(alias="workspaceId")) -> Response:
+        workspace_actor(request, workspace_id, write=True)
+        if not platform.delete_automation_rule(workspace_id, rule_id):
+            raise HTTPException(status_code=404, detail="Rule not found")
+        return Response(status_code=204)
+
+    @router.get("/notification-schedule", tags=["notifications"])
+    def notification_schedule(request: Request) -> dict[str, Any]:
+        return platform.notification_schedule(actor_for(request).id)
+
+    @router.put("/notification-schedule", tags=["notifications"])
+    def update_notification_schedule(data: NotificationScheduleUpdate, request: Request) -> dict[str, Any]:
+        return platform.set_notification_schedule(actor_for(request).id, data)
 
     return router

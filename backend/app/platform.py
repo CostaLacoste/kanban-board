@@ -11,6 +11,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
+from urllib.parse import urlencode
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
@@ -495,3 +497,200 @@ class PlatformService:
             return {"action": action, "capacity": [{"assignee": key, "minutes": value} for key, value in sorted(load.items(), key=lambda pair: pair[1])]}
         scored = sorted(tasks, key=lambda item: (item.get("priority") != "high", item.get("deadline") or "9999"))
         return {"action": action, "tasks": [{"id": item.get("id"), "title": item.get("title"), "reason": "priority+deadline"} for item in scored[:10]]}
+
+    def create_backup(self, workspace_id: str, user_id: str, name: str) -> dict[str, Any]:
+        snapshot = self.get_snapshot(workspace_id)
+        if snapshot is None:
+            raise KeyError(workspace_id)
+        item = {"id": str(uuid4()), "workspaceId": workspace_id, "name": name, "createdAt": utc_now()}
+        with self.database._lock, self.database.connect() as connection:
+            connection.execute(
+                "INSERT INTO workspace_backups(id,workspace_id,name,payload,created_by,created_at) VALUES (?,?,?,?,?,?)",
+                (item["id"], workspace_id, name, json.dumps(snapshot, ensure_ascii=False), user_id, item["createdAt"]),
+            )
+        return item
+
+    def list_backups(self, workspace_id: str) -> list[dict[str, Any]]:
+        with self.database._lock, self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT id,workspace_id,name,created_at FROM workspace_backups WHERE workspace_id=? ORDER BY created_at DESC LIMIT 100",
+                (workspace_id,),
+            ).fetchall()
+        return [{"id": row["id"], "workspaceId": row["workspace_id"], "name": row["name"], "createdAt": row["created_at"]} for row in rows]
+
+    def get_backup(self, workspace_id: str, backup_id: str) -> dict[str, Any] | None:
+        with self.database._lock, self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT payload FROM workspace_backups WHERE id=? AND workspace_id=?", (backup_id, workspace_id)
+            ).fetchone()
+        return json.loads(row["payload"]) if row else None
+
+    def restore_backup(self, workspace_id: str, backup_id: str) -> dict[str, Any] | None:
+        payload = self.get_backup(workspace_id, backup_id)
+        if payload is None:
+            return None
+        current = self.get_snapshot(workspace_id)
+        return self.save_snapshot(workspace_id, payload, current.get("revision") if current else None)
+
+    def list_automation_rules(self, workspace_id: str) -> list[dict[str, Any]]:
+        with self.database._lock, self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM automation_rules WHERE workspace_id=? ORDER BY created_at", (workspace_id,)
+            ).fetchall()
+        return [{"id": row["id"], "workspaceId": row["workspace_id"], "name": row["name"],
+                 "trigger": row["trigger_name"], "triggerValue": row["trigger_value"],
+                 "action": row["action_name"], "actionValue": row["action_value"],
+                 "active": bool(row["active"]), "createdAt": row["created_at"]} for row in rows]
+
+    def create_automation_rule(self, workspace_id: str, data: Any) -> dict[str, Any]:
+        item = {"id": str(uuid4()), "workspaceId": workspace_id, "name": data.name,
+                "trigger": data.trigger, "triggerValue": data.trigger_value, "action": data.action,
+                "actionValue": data.action_value, "active": data.active, "createdAt": utc_now()}
+        with self.database._lock, self.database.connect() as connection:
+            connection.execute(
+                "INSERT INTO automation_rules(id,workspace_id,name,trigger_name,trigger_value,action_name,action_value,active,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                (item["id"], workspace_id, item["name"], item["trigger"], item["triggerValue"], item["action"], item["actionValue"], int(item["active"]), item["createdAt"]),
+            )
+        return item
+
+    def delete_automation_rule(self, workspace_id: str, rule_id: str) -> bool:
+        with self.database._lock, self.database.connect() as connection:
+            return connection.execute("DELETE FROM automation_rules WHERE id=? AND workspace_id=?", (rule_id, workspace_id)).rowcount > 0
+
+    def notification_schedule(self, user_id: str) -> dict[str, Any]:
+        with self.database._lock, self.database.connect() as connection:
+            row = connection.execute("SELECT * FROM notification_schedules WHERE user_id=?", (user_id,)).fetchone()
+        return {"leadMinutes": row["lead_minutes"], "digestFrequency": row["digest_frequency"],
+                "digestHour": row["digest_hour"], "timezone": row["timezone"]} if row else {
+            "leadMinutes": 60, "digestFrequency": "daily", "digestHour": 9, "timezone": "UTC",
+        }
+
+    def set_notification_schedule(self, user_id: str, data: Any) -> dict[str, Any]:
+        with self.database._lock, self.database.connect() as connection:
+            connection.execute(
+                "INSERT INTO notification_schedules(user_id,lead_minutes,digest_frequency,digest_hour,timezone,updated_at) VALUES (?,?,?,?,?,?) "
+                "ON CONFLICT(user_id) DO UPDATE SET lead_minutes=excluded.lead_minutes,digest_frequency=excluded.digest_frequency,digest_hour=excluded.digest_hour,timezone=excluded.timezone,updated_at=excluded.updated_at",
+                (user_id, data.lead_minutes, data.digest_frequency, data.digest_hour, data.timezone, utc_now()),
+            )
+        return self.notification_schedule(user_id)
+
+    def oauth_start(self, provider: str) -> str:
+        providers = {
+            "google": (self.settings.oauth_google_client_id, "https://accounts.google.com/o/oauth2/v2/auth", "openid email profile"),
+            "github": (self.settings.oauth_github_client_id, "https://github.com/login/oauth/authorize", "read:user user:email"),
+            "microsoft": (self.settings.oauth_microsoft_client_id, "https://login.microsoftonline.com/common/oauth2/v2.0/authorize", "openid email profile User.Read"),
+        }
+        if provider not in providers or not providers[provider][0]:
+            raise RuntimeError("OAuth provider is not configured")
+        client_id, authorize_url, scope = providers[provider]
+        state = secrets.token_urlsafe(32)
+        verifier = secrets.token_urlsafe(48)
+        challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+        redirect_uri = f"{self.settings.api_public_url}/auth/oauth/{provider}/callback"
+        with self.database._lock, self.database.connect() as connection:
+            connection.execute(
+                "INSERT INTO oauth_states(id,provider,state_hash,code_verifier,redirect_uri,expires_at,created_at) VALUES (?,?,?,?,?,?,?)",
+                (str(uuid4()), provider, _token_hash(state), verifier, redirect_uri,
+                 (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat().replace("+00:00", "Z"), utc_now()),
+            )
+        return f"{authorize_url}?{urlencode({'client_id': client_id, 'redirect_uri': redirect_uri, 'response_type': 'code', 'scope': scope, 'state': state, 'code_challenge': challenge, 'code_challenge_method': 'S256'})}"
+
+    def run_scheduled_notifications(self) -> int:
+        now = datetime.now(timezone.utc)
+        delivered = 0
+        with self.database._lock, self.database.connect() as connection:
+            schedules = connection.execute(
+                "SELECT s.*,u.email,u.name FROM notification_schedules s JOIN users u ON u.id=s.user_id"
+            ).fetchall()
+            for schedule in schedules:
+                try:
+                    zone = ZoneInfo(schedule["timezone"])
+                except ZoneInfoNotFoundError:
+                    zone = timezone.utc
+                local_now = now.astimezone(zone)
+                workspaces = connection.execute(
+                    "SELECT workspace_id FROM workspace_user_roles WHERE user_id=?", (schedule["user_id"],)
+                ).fetchall()
+                open_tasks: list[dict[str, Any]] = []
+                for workspace in workspaces:
+                    snapshot = self.get_snapshot(workspace["workspace_id"]) or {}
+                    open_tasks.extend(task for task in snapshot.get("tasks", []) if task.get("status") != "done"
+                                      and str(task.get("assignee") or "").lower() in {schedule["email"].lower(), schedule["name"].lower()})
+                for task in open_tasks:
+                    try:
+                        deadline = datetime.fromisoformat(f"{task.get('deadline')}T23:59:59").replace(tzinfo=zone)
+                    except (TypeError, ValueError):
+                        continue
+                    if not 0 <= (deadline - local_now).total_seconds() <= int(schedule["lead_minutes"]) * 60:
+                        continue
+                    key_date = str(task.get("deadline"))
+                    exists = connection.execute(
+                        "SELECT 1 FROM scheduled_notification_deliveries WHERE user_id=? AND task_id=? AND kind=? AND scheduled_for=?",
+                        (schedule["user_id"], task.get("id"), "deadline", key_date),
+                    ).fetchone()
+                    if exists:
+                        continue
+                    connection.execute(
+                        "INSERT INTO scheduled_notification_deliveries(id,user_id,task_id,kind,scheduled_for,delivered_at) VALUES (?,?,?,?,?,?)",
+                        (str(uuid4()), schedule["user_id"], task.get("id"), "deadline", key_date, utc_now()),
+                    )
+                    connection.execute(
+                        "INSERT INTO notifications(id,user_id,kind,title,body,created_at) VALUES (?,?,?,?,?,?)",
+                        (str(uuid4()), schedule["user_id"], "deadline", "Task deadline", str(task.get("title") or "Task"), utc_now()),
+                    )
+                    connection.execute(
+                        "INSERT INTO jobs(id,kind,payload,status,available_at,created_at) VALUES (?,?,?,?,?,?)",
+                        (str(uuid4()), "push.send", json.dumps({"userId": schedule["user_id"], "title": "Flowboard", "body": f"Due soon: {task.get('title')}"}), "pending", utc_now(), utc_now()),
+                    )
+                    delivered += 1
+                frequency = schedule["digest_frequency"]
+                last = datetime.fromisoformat(schedule["last_digest_at"].replace("Z", "+00:00")) if schedule["last_digest_at"] else None
+                due_digest = frequency != "off" and local_now.hour >= schedule["digest_hour"] and (
+                    not last or (frequency == "daily" and last.astimezone(zone).date() < local_now.date()) or (frequency == "weekly" and (now - last).days >= 7)
+                )
+                if due_digest:
+                    body = f"{len(open_tasks)} open tasks in your workspaces"
+                    connection.execute(
+                        "INSERT INTO notifications(id,user_id,kind,title,body,created_at) VALUES (?,?,?,?,?,?)",
+                        (str(uuid4()), schedule["user_id"], "digest", "Flowboard digest", body, utc_now()),
+                    )
+                    connection.execute("UPDATE notification_schedules SET last_digest_at=? WHERE user_id=?", (utc_now(), schedule["user_id"]))
+                    connection.execute(
+                        "INSERT INTO jobs(id,kind,payload,status,available_at,created_at) VALUES (?,?,?,?,?,?)",
+                        (str(uuid4()), "push.send", json.dumps({"userId": schedule["user_id"], "title": "Flowboard digest", "body": body}), "pending", utc_now(), utc_now()),
+                    )
+                    delivered += 1
+        return delivered
+
+    async def oauth_profile(self, provider: str, state: str, code: str) -> dict[str, str]:
+        with self.database._lock, self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM oauth_states WHERE provider=? AND state_hash=?", (provider, _token_hash(state))
+            ).fetchone()
+            if not row or row["expires_at"] < utc_now():
+                raise ValueError("OAuth state is invalid or expired")
+            connection.execute("DELETE FROM oauth_states WHERE id=?", (row["id"],))
+        provider_config = {
+            "google": (self.settings.oauth_google_client_id, self.settings.oauth_google_client_secret, "https://oauth2.googleapis.com/token", "https://openidconnect.googleapis.com/v1/userinfo"),
+            "github": (self.settings.oauth_github_client_id, self.settings.oauth_github_client_secret, "https://github.com/login/oauth/access_token", "https://api.github.com/user"),
+            "microsoft": (self.settings.oauth_microsoft_client_id, self.settings.oauth_microsoft_client_secret, "https://login.microsoftonline.com/common/oauth2/v2.0/token", "https://graph.microsoft.com/v1.0/me"),
+        }
+        client_id, secret, token_url, profile_url = provider_config[provider]
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
+            token_response = await client.post(token_url, data={"client_id": client_id, "client_secret": secret,
+                "code": code, "grant_type": "authorization_code", "redirect_uri": row["redirect_uri"],
+                "code_verifier": row["code_verifier"]}, headers={"Accept": "application/json"})
+            token_response.raise_for_status()
+            access_token = token_response.json().get("access_token")
+            profile_response = await client.get(profile_url, headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"})
+            profile_response.raise_for_status()
+            profile = profile_response.json()
+            email = profile.get("email") or profile.get("mail") or profile.get("userPrincipalName")
+            if provider == "github" and not email:
+                emails = await client.get("https://api.github.com/user/emails", headers={"Authorization": f"Bearer {access_token}", "Accept": "application/vnd.github+json"})
+                emails.raise_for_status()
+                email = next((item["email"] for item in emails.json() if item.get("primary") and item.get("verified")), None)
+        if not access_token or not email:
+            raise ValueError("OAuth provider did not return a verified email")
+        return {"providerUserId": str(profile.get("sub") or profile.get("id")), "email": email,
+                "name": str(profile.get("name") or profile.get("login") or email.split("@", 1)[0])}

@@ -305,3 +305,29 @@ test("открывает платформенную консоль и перев
   await expect(page.locator("#platform-title")).toHaveText("Командна платформа");
   await expect(page.locator('[data-action="create-workspace"]')).toHaveText("Створити");
 });
+
+test("импорт, расширенный поиск, дашборд и конструктор правил", async ({ page }) => {
+  await page.locator('[data-action="open-platform"]').click();
+  await page.locator("#external-import-provider").selectOption("trello");
+  await page.locator("#external-import-file").setInputFiles({
+    name: "trello.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify({
+      lists: [{ id: "done", name: "Done" }], labels: [{ id: "release", name: "release" }],
+      cards: [{ name: "Imported release", desc: "From Trello", idList: "done", idLabels: ["release"] }],
+    })),
+  });
+  await page.locator('[data-action="import-external"]').click();
+  await page.locator('[data-action="close-platform"]').click();
+  await expect(page.getByRole("heading", { name: "Imported release" })).toBeVisible();
+  await page.locator("#task-search").fill("status:done tag:release");
+  await expect(page.locator(".task-card")).toHaveCount(1);
+
+  await page.locator('[data-action="open-productivity-hub"]').click();
+  await expect(page.locator("[data-dashboard-widgets] .dashboard-widget")).toHaveCount(4);
+  await page.locator("#rule-name").fill("Mark urgent");
+  await page.locator("#rule-trigger").selectOption("status");
+  await page.locator("#rule-trigger-value").fill("todo");
+  await page.locator("#rule-action").selectOption("setPriority");
+  await page.locator("#rule-action-value").fill("high");
+  await page.locator('[data-action="add-automation-rule"]').click();
+  await expect(page.locator("[data-automation-rules]")).toContainText("Mark urgent");
+});

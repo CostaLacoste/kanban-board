@@ -83,8 +83,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         database.initialize()
         async def job_loop() -> None:
+            ticks = 0
             while True:
                 await process_jobs(repository, config)
+                ticks += 1
+                if ticks % 30 == 0:
+                    platform.run_scheduled_notifications()
                 await asyncio.sleep(2)
 
         bus_task = asyncio.create_task(realtime.run_bus())
@@ -503,7 +507,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             attachment["size"] = len(content)
             with database._lock, database.connect() as connection:
                 connection.execute("UPDATE attachments SET size=? WHERE id=?", (len(content), attachment["id"]))
+        if attachment:
+            repository.add_attachment_version(attachment["id"], clean_name, media_type, content)
         return attachment
+
+    @router.get("/attachments/{attachment_id}/versions", tags=["attachments"])
+    def attachment_versions(attachment_id: str) -> list[dict]:
+        if repository.get_attachment(attachment_id) is None:
+            raise HTTPException(status_code=404, detail="Attachment not found")
+        return repository.list_attachment_versions(attachment_id)
+
+    @router.post("/attachments/{attachment_id}/versions", status_code=201, tags=["attachments"])
+    async def replace_attachment(attachment_id: str, request: Request, file: Annotated[UploadFile, File()]) -> dict:
+        if repository.get_attachment(attachment_id) is None:
+            raise HTTPException(status_code=404, detail="Attachment not found")
+        content = await file.read(config.max_attachment_size + 1)
+        await file.close()
+        if len(content) > config.max_attachment_size:
+            raise HTTPException(status_code=413, detail="Attachment is too large")
+        name = Path(file.filename or "file").name[:100]
+        media_type = (file.content_type or "application/octet-stream")[:100]
+        blocked = {"text/html", "image/svg+xml", "application/javascript", "application/x-sh"}
+        if media_type in blocked or Path(name).suffix.lower() in {".exe", ".dll", ".sh", ".bat", ".cmd", ".js", ".html", ".svg"}:
+            raise HTTPException(status_code=415, detail="Attachment type is not allowed")
+        actor: Actor = request.state.actor
+        version = repository.add_attachment_version(
+            attachment_id, name, media_type, content, actor.id if actor.authenticated else None,
+        )
+        if object_storage.enabled:
+            key, checksum = object_storage.put(attachment_id, content)
+            repository.bind_attachment_object(attachment_id, key, checksum)
+        return version
+
+    @router.get("/attachments/{attachment_id}/versions/{version_id}", tags=["attachments"])
+    def download_attachment_version(attachment_id: str, version_id: str) -> StreamingResponse:
+        version = repository.get_attachment_version(attachment_id, version_id)
+        if version is None:
+            raise HTTPException(status_code=404, detail="Attachment version not found")
+        encoded = quote(version["name"], safe="")
+        return StreamingResponse(iter([version["content"]]), media_type=version["media_type"], headers={
+            "Content-Disposition": f"attachment; filename=download; filename*=UTF-8''{encoded}",
+        })
 
     @router.get("/attachments/{attachment_id}", tags=["attachments"])
     def download_attachment(attachment_id: str) -> StreamingResponse:

@@ -106,6 +106,23 @@ def test_attachment_upload_download_and_delete(client: TestClient) -> None:
     assert client.delete(attachment["url"]).status_code == 204
 
 
+def test_attachment_version_history(client: TestClient) -> None:
+    task = client.post("/api/v1/tasks", json={"title": "Versioned file"}).json()
+    attachment = client.post(
+        f"/api/v1/tasks/{task['id']}/attachments", files={"file": ("brief.txt", b"v1", "text/plain")},
+    ).json()
+    versions = client.get(f"/api/v1/attachments/{attachment['id']}/versions")
+    assert versions.status_code == 200
+    assert versions.json()[0]["version"] == 1
+    replaced = client.post(
+        f"/api/v1/attachments/{attachment['id']}/versions", files={"file": ("brief-v2.txt", b"v2", "text/plain")},
+    )
+    assert replaced.status_code == 201
+    assert replaced.json()["version"] == 2
+    downloaded = client.get(f"/api/v1/attachments/{attachment['id']}/versions/{versions.json()[0]['id']}")
+    assert downloaded.content == b"v1"
+
+
 def test_automations_and_workspace_roundtrip(client: TestClient) -> None:
     automations = {"overdueHigh": True, "checklistDone": True, "dueTodayTag": False}
     existing = client.post(

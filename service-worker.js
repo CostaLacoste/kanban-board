@@ -1,4 +1,4 @@
-const CACHE_NAME = "flowboard-v12";
+const CACHE_NAME = "flowboard-v13";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -10,11 +10,11 @@ const APP_SHELL = [
   "./assets/icons/safari-pinned-tab.svg?v=2",
   "./assets/icons/flowboard-mark-192.png?v=2",
   "./assets/icons/flowboard-mark-512.png?v=2",
-  "./css/style.css?v=9",
-  "./css/base.css?v=9",
-  "./css/components.css?v=9",
-  "./css/overlays.css?v=9",
-  "./css/variables.css?v=9",
+  "./css/style.css?v=10",
+  "./css/base.css?v=10",
+  "./css/components.css?v=10",
+  "./css/overlays.css?v=10",
+  "./css/variables.css?v=10",
   "./js/main.js",
   "./js/api.js",
   "./js/automations.js",
@@ -22,6 +22,7 @@ const APP_SHELL = [
   "./js/drag-drop.js",
   "./js/filters.js",
   "./js/i18n.js",
+  "./js/importers.js",
   "./js/sorting.js",
   "./js/state.js",
   "./js/statistics.js",

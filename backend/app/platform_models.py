@@ -107,3 +107,24 @@ class AssistantRequest(ApiModel):
     workspace_id: str | None = Field(default=None, alias="workspaceId")
     text: str = Field(default="", max_length=10_000)
     task: dict[str, Any] | None = None
+
+
+class AutomationRuleCreate(ApiModel):
+    workspace_id: str = Field(alias="workspaceId")
+    name: ShortName
+    trigger: Literal["overdue", "dueToday", "status", "priority", "tag"]
+    trigger_value: str = Field(default="", alias="triggerValue", max_length=100)
+    action: Literal["setPriority", "setStatus", "addTag"]
+    action_value: str = Field(default="", alias="actionValue", max_length=100)
+    active: bool = True
+
+
+class NotificationScheduleUpdate(ApiModel):
+    lead_minutes: int = Field(default=60, alias="leadMinutes", ge=0, le=10080)
+    digest_frequency: Literal["off", "daily", "weekly"] = Field(default="daily", alias="digestFrequency")
+    digest_hour: int = Field(default=9, alias="digestHour", ge=0, le=23)
+    timezone: str = Field(default="UTC", max_length=100)
+
+
+class BackupCreate(ApiModel):
+    name: ShortName = "Manual backup"
