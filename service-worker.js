@@ -1,4 +1,4 @@
-const CACHE_NAME = "flowboard-v15";
+const CACHE_NAME = "flowboard-v16";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -29,6 +29,7 @@ const APP_SHELL = [
   "./js/storage.js",
   "./js/tasks.js",
   "./js/ui.js",
+  "./js/vendor/vercel-analytics.js",
   "./js/workflow.js"
 ];
 

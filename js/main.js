@@ -1,3 +1,4 @@
+import { inject as injectVercelAnalytics } from "./vendor/vercel-analytics.js";
 import {
   createBoard,
   deleteBoard,
@@ -100,6 +101,12 @@ import {
   removeColumn,
   renameColumn,
 } from "./workflow.js";
+
+const isLocalPreview = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+
+if (!isLocalPreview) {
+  injectVercelAnalytics();
+}
 
 const board = document.querySelector(".kanban-board");
 const form = document.querySelector("#task-form");
