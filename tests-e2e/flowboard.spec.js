@@ -141,6 +141,24 @@ test("переключает все языки, сохраняет выбор и
   await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
 });
 
+test("определяет язык браузера и сохраняет ручной выбор", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "languages", { get: () => ["uk-UA", "en-US"] });
+    Object.defineProperty(navigator, "language", { get: () => "uk-UA" });
+  });
+  await page.evaluate(() => localStorage.removeItem("flowboard-language"));
+  await page.reload();
+
+  await expect(page.locator("#language-select")).toHaveValue("uk");
+  await expect(page.locator("html")).toHaveAttribute("lang", "uk");
+  await expect(page.locator("#active-board-name")).toHaveText("Основна дошка");
+
+  await page.locator("#language-select").selectOption("en");
+  await page.reload();
+  await expect(page.locator("#language-select")).toHaveValue("en");
+  await expect(page.locator("#active-board-name")).toHaveText("Main board");
+});
+
 test("экспортирует и импортирует рабочее пространство", async ({ page }) => {
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Экспорт" }).click();

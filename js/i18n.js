@@ -287,7 +287,29 @@ const locales = {
   ru: "ru-RU", en: "en-US", ig: "ig-NG", uz: "uz-UZ", uk: "uk-UA", he: "he-IL", yi: "yi",
 };
 
+const languageAliases = {
+  iw: "he",
+  ji: "yi",
+};
+
 let currentLanguage = "ru";
+
+export function detectPreferredLanguage(languages) {
+  const browserLanguages = languages ?? (
+    typeof navigator === "undefined"
+      ? []
+      : [...(navigator.languages ?? []), navigator.language]
+  );
+
+  for (const locale of browserLanguages) {
+    if (typeof locale !== "string") continue;
+    const language = locale.trim().toLowerCase().split(/[-_]/)[0];
+    const supportedLanguage = languageAliases[language] ?? language;
+    if (dictionaries[supportedLanguage]) return supportedLanguage;
+  }
+
+  return "ru";
+}
 
 export function setLanguage(language) {
   currentLanguage = dictionaries[language] ? language : "ru";

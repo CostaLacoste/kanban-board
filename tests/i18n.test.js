@@ -1,7 +1,27 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { getLanguage, getLocale, getTranslationKeys, hasTranslation, setLanguage, t } from "../js/i18n.js";
+import {
+  detectPreferredLanguage,
+  getLanguage,
+  getLocale,
+  getTranslationKeys,
+  hasTranslation,
+  setLanguage,
+  t,
+} from "../js/i18n.js";
+
+test("определяет первый поддерживаемый язык браузера", () => {
+  assert.equal(detectPreferredLanguage(["fr-FR", "uk-UA", "en-US"]), "uk");
+  assert.equal(detectPreferredLanguage(["uz-Latn-UZ"]), "uz");
+  assert.equal(detectPreferredLanguage(["iw-IL"]), "he");
+  assert.equal(detectPreferredLanguage(["ji"]), "yi");
+});
+
+test("использует русский, если языки браузера не поддерживаются", () => {
+  assert.equal(detectPreferredLanguage(["de-DE", "fr-FR"]), "ru");
+  assert.equal(detectPreferredLanguage([]), "ru");
+});
 
 test("переключает язык и подставляет переменные", () => {
   setLanguage("en");

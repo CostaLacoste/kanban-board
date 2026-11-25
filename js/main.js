@@ -29,7 +29,13 @@ import {
   updateTask,
 } from "./tasks.js";
 import { renderArchive, renderBoard, renderCalendar, showNotification } from "./ui.js";
-import { setLanguage, t, translateDocument } from "./i18n.js";
+import {
+  detectPreferredLanguage,
+  getLanguage,
+  setLanguage,
+  t,
+  translateDocument,
+} from "./i18n.js";
 import { applyAutomations, createAutomationRule, defaultAutomations } from "./automations.js";
 import { importExternalData } from "./importers.js";
 import {
@@ -2435,9 +2441,9 @@ automations = {
 dashboardPreferences = { ...dashboardPreferences, ...(loadSetting("dashboard", {}) || {}) };
 goals = Array.isArray(loadSetting("goals", [])) ? loadSetting("goals", []) : [];
 calendarMonth.value = todayMonth();
-const language = loadSetting("language", "ru");
-setLanguage(language);
-languageSelect.value = language;
+const savedLanguage = loadSetting("language", null);
+setLanguage(savedLanguage ?? detectPreferredLanguage());
+languageSelect.value = getLanguage();
 translateDocument();
 activeBoardId = loadSetting("activeBoard", getBoards()[0].id);
 sortMode = loadSetting("sort", "manual");

@@ -1,4 +1,4 @@
-const CACHE_NAME = "flowboard-v16";
+const CACHE_NAME = "flowboard-v17";
 const APP_SHELL = [
   "./",
   "./index.html",
